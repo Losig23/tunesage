@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TuneSage — AI Music Recommendations</title>
+<style>
+  :root { --bg:#0f0d1a; --card:#1b1830; --accent:#8b5cf6; --accent2:#22d3ee;
+          --text:#f1eefc; --muted:#a7a3c7; }
+  * { box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg);
+         color:var(--text); margin:0; padding:24px; }
+  .wrap { max-width:960px; margin:0 auto; }
+  header { text-align:center; margin-bottom:28px; }
+  header h1 { font-size:2.4rem; margin:0;
+              background:linear-gradient(90deg,var(--accent),var(--accent2));
+              -webkit-background-clip:text; background-clip:text; color:transparent; }
+  header p { color:var(--muted); }
+  section { background:var(--card); border-radius:14px; padding:20px;
+            margin-bottom:20px; box-shadow:0 4px 24px rgba(0,0,0,.35); }
+  h2 { margin-top:0; font-size:1.2rem; }
+  form.log { display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:8px; }
+  input, button { padding:10px 12px; border-radius:8px; border:1px solid #3b3670;
+                  background:#121024; color:var(--text); font-size:.95rem; }
+  input:focus { outline:2px solid var(--accent); }
+  button { background:var(--accent); border:none; cursor:pointer; font-weight:600; }
+  button:hover { filter:brightness(1.15); }
+  button.ghost { background:transparent; border:1px solid #3b3670; }
+  button.small { padding:6px 10px; font-size:.8rem; }
+  .track, .rec { display:flex; align-items:center; gap:12px; padding:10px 0;
+                 border-bottom:1px solid #2a2752; }
+  .track:last-child, .rec:last-child { border-bottom:none; }
+  .rank { font-weight:700; color:var(--accent2); width:28px; }
+  .meta { flex:1; }
+  .meta .t { font-weight:600; }
+  .meta .a { color:var(--muted); font-size:.85rem; }
+  .plays { color:var(--muted); font-size:.85rem; }
+  .bar { height:8px; background:#2a2752; border-radius:4px; overflow:hidden;
+         margin:6px 0; }
+  .bar > div { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+  .why { color:var(--muted); font-size:.85rem; font-style:italic; }
+  .votes { display:flex; gap:6px; }
+  .voted { outline:2px solid var(--accent2); }
+  .threads { color:var(--muted); font-size:.8rem; }
+  .threads a { color:var(--accent2); }
+  .notice { background:#2a1f4d; border:1px solid var(--accent); border-radius:8px;
+            padding:10px 14px; font-size:.85rem; margin-bottom:12px; }
+  .scores { font-size:.75rem; color:var(--muted); }
+  @media (max-width:640px){ form.log{ grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎧 TuneSage</h1>
+    <p>Log what you listen to. We mine music forums and rank picks with a hybrid AI engine.</p>
+  </header>
+
+  <section>
+    <h2>➕ Log a listen</h2>
+    <form class="log" id="logForm">
+      <input id="fTitle" placeholder="Song title" required>
+      <input id="fArtist" placeholder="Artist" required>
+      <input id="fGenre" placeholder="Genre (optional)">
+      <input id="fTags" placeholder="Mood tags, comma separated">
+      <button type="submit">Log</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>🔥 Your top tracks</h2>
+    <div id="topTracks"><p class="threads">Loading…</p></div>
+  </section>
+
+  <section>
+    <h2>✨ Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
+    <div id="recNotice"></div>
+    <div id="recs"><p class="threads">Loading…</p></div>
+    <h3 style="font-size:.95rem;color:var(--muted)">Forum threads mined</h3>
+    <div id="threads" class="threads"></div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function loadTop() {
+  const { songs } = await api('/api/listens/top?limit=10');
+  $('topTracks').innerHTML = songs.length
+    ? songs.map((s, i) => `
+      <div class="track"><span class="rank">#${i + 1}</span>
+        <div class="meta"><div class="t">${esc(s.title)}</div>
+        <div class="a">${esc(s.artist)}${s.genre ? ' · ' + esc(s.genre) : ''}</div></div>
+        <span class="plays">${s.play_count} plays</span></div>`).join('')
+    : '<p class="threads">No listens yet — log your first song above!</p>';
+}
+
+async function loadRecs(refresh = false) {
+  $('recs').innerHTML = '<p class="threads">Mining forums & scoring…</p>';
+  const data = await api(`/api/recommendations?limit=10&refresh=${refresh ? 1 : 0}`);
+  const srcNote = data.source === 'fallback'
+    ? '⚠️ Reddit was unreachable, so these come from a built-in sample dataset (see <code>forum.py</code> fallback).'
+    : `⛏️ Mined live from Reddit${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`;
+  $('recNotice').innerHTML = `<div class="notice">${srcNote}<br>
+    Weights — content <b>${data.weights.w_content}</b> · forum <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
+    (they adapt as you vote 👍/👎).</div>`;
+  $('recs').innerHTML = data.songs.length ? data.songs.map((s, i) => `
+    <div class="rec"><span class="rank">#${i + 1}</span>
+      <div class="meta">
+        <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span></div>
+        <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
+        <div class="scores">score ${s.score} · content ${s.content_score} · forum ${s.forum_score} · feedback ${s.feedback_boost}</div>
+        <div class="why">${esc(s.why)}</div>
+      </div>
+      <div class="votes">
+        <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',true,this)">👍</button>
+        <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',false,this)">👎</button>
+      </div></div>`).join('')
+    : '<p class="threads">Log some listens first, then come back for picks!</p>';
+  $('threads').innerHTML = (data.threads || []).map(t =>
+    t.url ? `• <a href="${t.url}" target="_blank" rel="noopener">${esc(t.title)}</a> <span>r/${esc(t.subreddit)}</span><br>`
+          : `• ${esc(t.title)}<br>`).join('') || '<p>—</p>';
+}
+
+async function vote(title, artist, liked, btn) {
+  await api('/api/feedback', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ song_title: title, artist, liked }) });
+  btn.classList.add('voted');
+  btn.parentElement.querySelectorAll('button').forEach(b => { if (b !== btn) b.classList.remove('voted'); });
+}
+
+$('logForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  await api('/api/listens', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: $('fTitle').value, artist: $('fArtist').value,
+      genre: $('fGenre').value,
+      tags: $('fTags').value.split(',').map(t => t.trim()).filter(Boolean)
+    }) });
+  e.target.reset();
+  loadTop();
+});
+
+$('refreshBtn').addEventListener('click', () => loadRecs(true));
+
+// minimal escaping helpers
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const jsq = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+loadTop();
+loadRecs();
+</script>
+</body>
+</html>
