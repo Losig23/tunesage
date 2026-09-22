@@ -6,10 +6,8 @@ Tables:
   recommendations  - cache of the last pipeline run (JSON payload + timestamp).
   feedback         - one row per (song_title, artist) with like/dislike counts.
   weights          - single-row table holding the hybrid ranker weights.
-  spotify_auth     - single row (id=1) with the connected Spotify account's
-                     OAuth tokens (access/refresh, expiry, display name).
-  spotify_imported - played_at TEXT PRIMARY KEY -> song_id; dedupe log so a
-                     Spotify re-import never double-counts a play.
+  external_imports - (source, played_at) -> song_id; dedupe log so a
+                     re-import (e.g. Last.fm scrobbles) never double-counts.
 """
 
 from __future__ import annotations
@@ -18,8 +16,6 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-
-import spotify as spotify_client
 
 DB_PATH = Path(__file__).with_name("tunesage.db")
 
@@ -53,18 +49,15 @@ CREATE TABLE IF NOT EXISTS weights (
     w_feedback REAL NOT NULL DEFAULT 0.15
 );
 CREATE INDEX IF NOT EXISTS idx_songs_playcount ON songs(play_count DESC);
-CREATE TABLE IF NOT EXISTS spotify_auth (
-    id INTEGER PRIMARY KEY CHECK (id = 1),  -- single auth row
-    access_token TEXT NOT NULL,
-    refresh_token TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,            -- unix timestamp
-    spotify_user_id TEXT NOT NULL DEFAULT '',
-    display_name TEXT NOT NULL DEFAULT '',
-    connected_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS spotify_imported (
-    played_at TEXT PRIMARY KEY,             -- Spotify ISO-8601 timestamp; dedupe key
-    song_id INTEGER NOT NULL               -- FK -> songs(id)
+-- Removed legacy tables from the old Spotify integration (dropped in favor
+-- of the generic external_imports table used by the Last.fm importer).
+DROP TABLE IF EXISTS spotify_auth;
+DROP TABLE IF EXISTS spotify_imported;
+CREATE TABLE IF NOT EXISTS external_imports (
+    source TEXT NOT NULL,               -- e.g. 'lastfm'
+    played_at TEXT NOT NULL,            -- ISO-8601 play timestamp; dedupe key
+    song_id INTEGER NOT NULL,           -- FK -> songs(id)
+    PRIMARY KEY (source, played_at)
 );
 """
 
@@ -255,114 +248,47 @@ def nudge_weights(liked: bool, path: Path | str = DB_PATH) -> dict:
     return w
 
 
-# ---- spotify ---------------------------------------------------------------
+# ---- external imports (Last.fm scrobbles, etc.) ------------------------------
 
-def save_spotify_auth(access_token: str, refresh_token: str, expires_at: int,
-                      spotify_user_id: str = "", display_name: str = "",
-                      path: Path | str = DB_PATH) -> None:
-    """Store (or replace) the connected Spotify account's tokens."""
-    conn = get_conn(path)
-    try:
-        conn.execute(
-            """INSERT INTO spotify_auth
-                   (id, access_token, refresh_token, expires_at,
-                    spotify_user_id, display_name, connected_at)
-               VALUES (1, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                   access_token = excluded.access_token,
-                   refresh_token = excluded.refresh_token,
-                   expires_at = excluded.expires_at,
-                   spotify_user_id = excluded.spotify_user_id,
-                   display_name = excluded.display_name,
-                   connected_at = excluded.connected_at""",
-            (access_token, refresh_token, expires_at,
-             spotify_user_id, display_name, int(time.time())),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_spotify_auth(path: Path | str = DB_PATH) -> dict | None:
-    """The stored Spotify auth row, or None if no account is connected."""
-    conn = get_conn(path)
-    try:
-        row = conn.execute(
-            "SELECT * FROM spotify_auth WHERE id = 1").fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def clear_spotify_auth(path: Path | str = DB_PATH) -> None:
-    """Disconnect: drop the stored tokens."""
-    conn = get_conn(path)
-    try:
-        conn.execute("DELETE FROM spotify_auth WHERE id = 1")
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_valid_access_token(path: Path | str = DB_PATH) -> str | None:
-    """A usable Spotify access token, or None if no account is connected.
-
-    Returns the stored token while it's unexpired (60s skew buffer); when
-    expired, refreshes it via the stored refresh token and persists the new
-    tokens. Spotify's refresh response may omit a new refresh token — in that
-    case the previous one is kept.
-    """
-    auth = get_spotify_auth(path=path)
-    if not auth:
-        return None
-    if auth["expires_at"] > int(time.time()) + 60:
-        return auth["access_token"]
-    try:
-        tokens = spotify_client.refresh_access_token(auth["refresh_token"])
-    except Exception:
-        return None
-    refresh_token = tokens.get("refresh_token") or auth["refresh_token"]
-    expires_at = int(time.time()) + tokens["expires_in"]
-    save_spotify_auth(tokens["access_token"], refresh_token, expires_at,
-                      auth["spotify_user_id"], auth["display_name"],
-                      path=path)
-    return tokens["access_token"]
-
-
-def spotify_already_imported(played_at: str,
-                             path: Path | str = DB_PATH) -> bool:
-    """True if this played_at timestamp was imported before (dedupe check)."""
+def already_imported(source: str, played_at: str,
+                     path: Path | str = DB_PATH) -> bool:
+    """True if this (source, played_at) was imported before (dedupe check)."""
     conn = get_conn(path)
     try:
         return conn.execute(
-            "SELECT 1 FROM spotify_imported WHERE played_at = ?",
-            (played_at,)).fetchone() is not None
+            "SELECT 1 FROM external_imports WHERE source = ? AND played_at = ?",
+            (source, played_at)).fetchone() is not None
     finally:
         conn.close()
 
 
-def record_spotify_import(played_at: str, song_id: int,
-                          path: Path | str = DB_PATH) -> None:
-    """Record that a played_at was imported as song_id (INSERT OR IGNORE —
-    a second import of the same play is a no-op, never a double count)."""
+def record_import(source: str, played_at: str, song_id: int,
+                  path: Path | str = DB_PATH) -> None:
+    """Record that (source, played_at) was imported as song_id.
+
+    INSERT OR IGNORE — a second import of the same play is a no-op, never a
+    double count.
+    """
     conn = get_conn(path)
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO spotify_imported (played_at, song_id)"
-            " VALUES (?, ?)",
-            (played_at, song_id),
+            "INSERT OR IGNORE INTO external_imports (source, played_at, song_id)"
+            " VALUES (?, ?, ?)",
+            (source, played_at, song_id),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def last_spotify_import_at(path: Path | str = DB_PATH) -> str | None:
-    """Newest imported played_at (ISO-8601 strings sort lexicographically)."""
+def last_import_at(source: str, path: Path | str = DB_PATH) -> str | None:
+    """Newest imported played_at for a source (ISO-8601 sorts lexicographically)."""
     conn = get_conn(path)
     try:
         row = conn.execute(
-            "SELECT MAX(played_at) AS m FROM spotify_imported").fetchone()
+            "SELECT MAX(played_at) AS m FROM external_imports"
+            " WHERE source = ?",
+            (source,)).fetchone()
         return row["m"] if row and row["m"] else None
     finally:
         conn.close()

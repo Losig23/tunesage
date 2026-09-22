@@ -68,9 +68,8 @@
   </section>
 
   <section>
-    <h2>🎵 Spotify</h2>
-    <div id="spotifyNotice"></div>
-    <div id="spotifyBody"><p class="threads">Loading…</p></div>
+    <h2>📻 Last.fm</h2>
+    <div id="lastfmBody"><p class="threads">Loading…</p></div>
   </section>
 
   <section>
@@ -157,42 +156,47 @@ $('logForm').addEventListener('submit', async e => {
 
 $('refreshBtn').addEventListener('click', () => loadRecs(true));
 
-async function disconnectSpotify() {
-  await api('/api/spotify/disconnect', { method: 'POST' });
-  loadSpotify();
-}
-
-async function loadSpotify() {
-  const params = new URLSearchParams(location.search);
-  if (params.get('spotify') === 'connected') {
-    $('spotifyNotice').innerHTML =
-      '<div class="notice">✅ Spotify connected! Hit “Import recent plays” to pull your listening history in.</div>';
-    history.replaceState(null, '', location.pathname);
-  }
+async function loadLastfm() {
   let status;
   try {
-    status = await api('/api/spotify/status');
+    status = await api('/api/lastfm/status');
   } catch (e) {
-    $('spotifyBody').innerHTML = '<p class="threads">Could not load Spotify status.</p>';
+    $('lastfmBody').innerHTML = '<p class="threads">Could not load Last.fm status.</p>';
     return;
   }
-  if (!status.connected) {
-    $('spotifyBody').innerHTML = `
-      <p class="threads">Connect your Spotify account to import your recently-played
-      tracks automatically — no more manual logging.</p>
-      <a href="/api/spotify/connect"><button>🔗 Connect Spotify</button></a>`;
+  if (!status.configured) {
+    $('lastfmBody').innerHTML = `
+      <p class="threads">Import your recent scrobbles automatically — no more manual logging.</p>
+      <p class="threads">Setup: get a free API key at
+        <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">last.fm/api/account/create</a>,
+        then set the <code>LASTFM_API_KEY</code> and <code>LASTFM_USERNAME</code>
+        environment variables and restart the app.</p>`;
     return;
   }
   const last = status.last_import_at
     ? `Last import: ${esc(status.last_import_at)}` : 'No imports yet.';
-  $('spotifyBody').innerHTML = `
-    <p>Connected as <b>${esc(status.display_name)}</b></p>
+  $('lastfmBody').innerHTML = `
+    <p>Scrobbling as <b>${esc(status.username)}</b></p>
     <p class="threads">${esc(last)}</p>
-    <button id="importBtn">⬇ Import recent plays</button>
-    <button class="ghost" id="disconnectBtn">Disconnect</button>
+    <button id="importBtn">⬇ Import recent scrobbles</button>
     <div id="importResult" class="threads" style="margin-top:10px"></div>`;
-  $('importBtn').addEventListener('click', importSpotify);
-  $('disconnectBtn').addEventListener('click', disconnectSpotify);
+  $('importBtn').addEventListener('click', importLastfm);
+}
+
+async function importLastfm() {
+  const btn = $('importBtn');
+  btn.disabled = true;
+  $('importResult').textContent = 'Importing…';
+  try {
+    const r = await api('/api/lastfm/import', { method: 'POST' });
+    $('importResult').textContent =
+      `Imported ${r.imported} new scrobble${r.imported === 1 ? '' : 's'}, skipped ${r.skipped} already-imported.`;
+    loadTop();
+  } catch (e) {
+    $('importResult').textContent = 'Import failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // minimal escaping helpers
@@ -202,7 +206,7 @@ const jsq = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
 loadTop();
 loadRecs();
-loadSpotify();
+loadLastfm();
 </script>
 </body>
 </html>
