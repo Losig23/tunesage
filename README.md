@@ -96,19 +96,22 @@ scrobble from Spotify, so your Spotify plays show up as scrobbles.
 
 1. Create an API account at [last.fm/api/account/create](https://www.last.fm/api/account/create)
    to get an **API key**.
-2. Set environment variables (locally via `.env`/shell, on Render under the
-   service's **Environment** tab):
-   - `LASTFM_API_KEY` — from your Last.fm API account page
-   - `LASTFM_USERNAME` — your Last.fm username
+2. Set environment variables:
+   - **Locally:** copy `.env.example` to `.env` and fill in your values
+     (`cp .env.example .env`):
+     - `LASTFM_API_KEY` — from your Last.fm API account page
+     - `LASTFM_USERNAME` — your Last.fm username
 
-   To avoid re-exporting them every session, persist them in your shell
-   profile (e.g. append to `~/.bashrc` / `~/.zshrc`):
-   ```bash
-   export LASTFM_API_KEY="your-key-here"
-   export LASTFM_USERNAME="your-lastfm-username"
-   ```
-   then `source ~/.bashrc` (or open a new terminal). Keep the key out of
-   git — it lives in your profile, not the repo.
+     `.env` is gitignored, so your key never gets committed. The app loads
+     it automatically via `python-dotenv`; real environment variables
+     (shell exports, CI, Render) still take precedence over `.env` values.
+   - **On Render:** set them under the service's **Environment** tab.
+   - **Alternative:** export them in your shell profile instead
+     (`~/.bashrc` / `~/.zshrc`):
+     ```bash
+     export LASTFM_API_KEY="your-key-here"
+     export LASTFM_USERNAME="your-lastfm-username"
+     ```
 3. Open the dashboard → **Last.fm** card → **Import recent scrobbles**.
 
 How it works: `POST /api/lastfm/import` calls Last.fm's

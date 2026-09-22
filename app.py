@@ -11,6 +11,9 @@ import os
 import secrets
 
 from flask import Flask, jsonify, request, send_from_directory
+from dotenv import load_dotenv
+
+load_dotenv()  # populate os.environ from .env (if present); real env vars win
 
 import db
 import forum as forum_miner
