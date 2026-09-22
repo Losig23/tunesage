@@ -51,6 +51,11 @@ python app.py           # → http://localhost:5000
 | `GET` | `/api/listens/top?limit=10` | most-listened, `play_count` desc |
 | `GET` | `/api/recommendations?limit=10&refresh=0` | ranked recs (6h cache; `refresh=1` re-mines) |
 | `POST` | `/api/feedback` | `{song_title, artist, liked}` → stores vote, nudges weights |
+| `GET` | `/api/spotify/connect` | start Spotify OAuth (redirects to Spotify) |
+| `GET` | `/api/spotify/callback` | OAuth callback: verifies state, stores tokens |
+| `GET` | `/api/spotify/status` | `{connected, display_name?, last_import_at?}` |
+| `POST` | `/api/spotify/import` | import up to 50 recently-played → `{imported, skipped, songs}` |
+| `POST` | `/api/spotify/disconnect` | delete stored Spotify tokens |
 | `GET` | `/` | the dashboard |
 
 ## How the AI works
@@ -75,6 +80,37 @@ renormalized) — online learning: the system learns which signals *you* trust.
 
 **Explainability.** `explain()` cites the overlapping taste terms, mention
 count, source threads, and sentiment — every recommendation ships with a "why".
+
+## Spotify integration
+
+Connect your own Spotify account and import your recently-played tracks
+instead of logging listens by hand. Manual logging (`POST /api/listens`)
+still works — both write to the same listening history. Imports are
+deduplicated by play timestamp, so re-importing never double-counts.
+
+**Setup (one time):**
+
+1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+   → **Create app**. Any name/description works.
+2. In the app's settings, add these **Redirect URIs**:
+   - `http://localhost:5000/api/spotify/callback` (local dev)
+   - `https://<your-render-app>.onrender.com/api/spotify/callback` (production)
+3. Set environment variables (locally via `.env`/shell, on Render under the
+   service's **Environment** tab):
+   - `SPOTIFY_CLIENT_ID` — from the Spotify dashboard
+   - `SPOTIFY_CLIENT_SECRET` — from the Spotify dashboard
+   - `SPOTIFY_REDIRECT_URI` — must exactly match one of the redirect URIs above
+   - `SECRET_KEY` — any long random string (signs the Flask session used for
+     OAuth state; without it the app falls back to an ephemeral dev key)
+4. Open the dashboard → **Spotify** card → **Connect Spotify**, approve, then
+   **Import recent plays**. Only the `user-read-recently-played` scope is
+   requested — TuneSage can't modify your library or playlists.
+
+How it works: `/api/spotify/connect` generates a random OAuth `state`, stores
+it in the Flask session, and redirects to Spotify. The callback verifies the
+state (CSRF check), exchanges the code for tokens (`spotify.py`), and stores
+them in SQLite. Access tokens expire after ~1 hour; `db.get_valid_access_token()`
+transparently refreshes them with the stored refresh token.
 
 ## Deploy to Render (free)
 

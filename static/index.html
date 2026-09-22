@@ -68,6 +68,12 @@
   </section>
 
   <section>
+    <h2>🎵 Spotify</h2>
+    <div id="spotifyNotice"></div>
+    <div id="spotifyBody"><p class="threads">Loading…</p></div>
+  </section>
+
+  <section>
     <h2>🔥 Your top tracks</h2>
     <div id="topTracks"><p class="threads">Loading…</p></div>
   </section>
@@ -151,6 +157,44 @@ $('logForm').addEventListener('submit', async e => {
 
 $('refreshBtn').addEventListener('click', () => loadRecs(true));
 
+async function disconnectSpotify() {
+  await api('/api/spotify/disconnect', { method: 'POST' });
+  loadSpotify();
+}
+
+async function loadSpotify() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('spotify') === 'connected') {
+    $('spotifyNotice').innerHTML =
+      '<div class="notice">✅ Spotify connected! Hit “Import recent plays” to pull your listening history in.</div>';
+    history.replaceState(null, '', location.pathname);
+  }
+  let status;
+  try {
+    status = await api('/api/spotify/status');
+  } catch (e) {
+    $('spotifyBody').innerHTML = '<p class="threads">Could not load Spotify status.</p>';
+    return;
+  }
+  if (!status.connected) {
+    $('spotifyBody').innerHTML = `
+      <p class="threads">Connect your Spotify account to import your recently-played
+      tracks automatically — no more manual logging.</p>
+      <a href="/api/spotify/connect"><button>🔗 Connect Spotify</button></a>`;
+    return;
+  }
+  const last = status.last_import_at
+    ? `Last import: ${esc(status.last_import_at)}` : 'No imports yet.';
+  $('spotifyBody').innerHTML = `
+    <p>Connected as <b>${esc(status.display_name)}</b></p>
+    <p class="threads">${esc(last)}</p>
+    <button id="importBtn">⬇ Import recent plays</button>
+    <button class="ghost" id="disconnectBtn">Disconnect</button>
+    <div id="importResult" class="threads" style="margin-top:10px"></div>`;
+  $('importBtn').addEventListener('click', importSpotify);
+  $('disconnectBtn').addEventListener('click', disconnectSpotify);
+}
+
 // minimal escaping helpers
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -158,6 +202,7 @@ const jsq = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
 loadTop();
 loadRecs();
+loadSpotify();
 </script>
 </body>
 </html>
