@@ -100,6 +100,15 @@ scrobble from Spotify, so your Spotify plays show up as scrobbles.
    service's **Environment** tab):
    - `LASTFM_API_KEY` — from your Last.fm API account page
    - `LASTFM_USERNAME` — your Last.fm username
+
+   To avoid re-exporting them every session, persist them in your shell
+   profile (e.g. append to `~/.bashrc` / `~/.zshrc`):
+   ```bash
+   export LASTFM_API_KEY="your-key-here"
+   export LASTFM_USERNAME="your-lastfm-username"
+   ```
+   then `source ~/.bashrc` (or open a new terminal). Keep the key out of
+   git — it lives in your profile, not the repo.
 3. Open the dashboard → **Last.fm** card → **Import recent scrobbles**.
 
 How it works: `POST /api/lastfm/import` calls Last.fm's
