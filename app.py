@@ -1,7 +1,7 @@
 """TuneSage — AI-powered music recommendation platform.
 
 Flask app factory + routes. Thin controllers: HTTP in/out here, ML in
-recommender.py, forum mining in forum.py, persistence in db.py.
+recommender.py, candidate mining in forum.py (Last.fm API), persistence in db.py.
 """
 
 from __future__ import annotations
@@ -85,7 +85,8 @@ def create_app() -> Flask:
             return jsonify({"songs": [], "threads": [],
                             "message": "Log some listens first!"})
 
-        mined = forum_miner.mine_recommendations(seeds)
+        mined = forum_miner.mine_recommendations(
+            seeds, api_key=_lastfm_config()[0])
 
         # Deduplicate: don't recommend songs the user already listens to.
         known = {(s["title"].lower(), s["artist"].lower()) for s in seeds}

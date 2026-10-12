@@ -105,7 +105,7 @@ def test_explain_mentions_terms_and_sources(listens):
     why = engine.explain(cand, terms)
     assert isinstance(why, str) and len(why) > 20
     assert any(t in why for t in terms)  # cites a taste term
-    assert "4 forum threads" in why
+    assert "popular with other listeners" in why
 
 
 def test_snippet_sentiment_bounds():

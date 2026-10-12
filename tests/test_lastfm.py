@@ -259,3 +259,96 @@ def test_status_reflects_last_import(app_client, lastfm_env):
         app_client.post("/api/lastfm/import")
     body = app_client.get("/api/lastfm/status").get_json()
     assert body["last_import_at"] == "2026-09-21T21:00:00Z"
+
+
+# ---- lastfm.py: candidate mining ---------------------------------------------
+
+def _similar_payload(*artists):
+    return {"similarartists": {"artist": [
+        {"name": name, "match": str(match)} for name, match in artists]}}
+
+
+def _toptracks_payload(artist, *tracks):
+    return {"toptracks": {"track": [
+        {"name": title, "playcount": str(pc), "listeners": str(listeners),
+         "artist": {"name": artist}}
+        for title, listeners, pc in tracks]}}
+
+
+def _mock_get(payloads):
+    """requests.get mock serving one payload per call, in order."""
+    resps = []
+    for p in payloads:
+        r = MagicMock(status_code=200)
+        r.json.return_value = p
+        resps.append(r)
+    return MagicMock(side_effect=resps)
+
+
+def test_get_similar_artists_parses_match_scores():
+    payload = _similar_payload(("Tame Impala", 0.92), ("MGMT", 0.71),
+                               ("", 0.5))  # blank name skipped
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch("lastfm.requests.get", return_value=resp):
+        sims = lastfm.get_similar_artists("key123", "Arctic Monkeys", limit=5)
+    assert sims == [{"name": "Tame Impala", "match": 0.92},
+                    {"name": "MGMT", "match": 0.71}]
+
+
+def test_get_artist_top_tracks_parses_listeners():
+    payload = _toptracks_payload("Tame Impala",
+                                 ("The Less I Know The Better", 2500000, 180000000),
+                                 ("Borderline", 900000, 60000000))
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch("lastfm.requests.get", return_value=resp):
+        tracks = lastfm.get_artist_top_tracks("key123", "Tame Impala", limit=2)
+    assert tracks[0]["title"] == "The Less I Know The Better"
+    assert tracks[0]["listeners"] == 2500000
+    assert tracks[0]["artist"] == "Tame Impala"
+
+
+def test_mentions_bucketing_keeps_scale_sane():
+    assert lastfm._mentions_from_listeners(10_000_000) == 7
+    assert lastfm._mentions_from_listeners(100_000) == 5
+    assert lastfm._mentions_from_listeners(1_000) == 3
+    assert lastfm._mentions_from_listeners(0) == 1  # never zero/negative
+
+
+def test_mine_candidates_builds_ranked_unique_candidates():
+    similar = _similar_payload(("Tame Impala", 0.9), ("MGMT", 0.7))
+    tame_tracks = _toptracks_payload(
+        "Tame Impala", ("The Less I Know The Better", 2500000, 1),
+        ("Borderline", 900000, 1))
+    mgmt_tracks = _toptracks_payload(
+        "MGMT", ("Kids", 1800000, 1),
+        # same title+artist as Tame Impala's track above -> deduped
+        ("Borderline", 5000, 1))
+    mgmt_tracks["toptracks"]["track"][1]["artist"] = {"name": "Tame Impala"}
+    mock = _mock_get([similar, tame_tracks, mgmt_tracks])
+    with patch("lastfm.requests.get", mock), \
+         patch("lastfm.time.sleep"):  # don't actually sleep in tests
+        mined = lastfm.mine_candidates("key123", ["Arctic Monkeys"],
+                                       max_artists=1, similar_per_artist=2,
+                                       tracks_per_artist=2)
+    titles = [c["title"] for c in mined["candidates"]]
+    assert titles.count("Borderline") == 1  # deduped, kept max listeners
+    assert mined["candidates"][0]["mentions"] >= \
+        mined["candidates"][-1]["mentions"]  # sorted desc
+    assert all(c["mentions"] >= 1 for c in mined["candidates"])
+    assert mined["sources"]  # provenance entries for the UI
+    assert all("Last.fm" in s["title"] for s in mined["sources"])
+
+
+def test_mine_candidates_requires_api_key():
+    with pytest.raises(lastfm.LastfmError):
+        lastfm.mine_candidates("", ["Arctic Monkeys"])
+
+
+def test_mine_candidates_raises_when_nothing_found():
+    empty = {"similarartists": {"artist": []}}
+    with patch("lastfm.requests.get", _mock_get([empty])), \
+         patch("lastfm.time.sleep"):
+        with pytest.raises(RuntimeError, match="no candidates"):
+            lastfm.mine_candidates("key123", ["Nobody Ever Heard Of Them"])

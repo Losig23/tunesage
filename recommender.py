@@ -181,19 +181,19 @@ def explain(candidate: dict, profile_terms: list[str]) -> str:
     if overlap:
         reasons.append(f"matches your taste for {', '.join(overlap)}")
     if mentions > 1:
-        reasons.append(f"mentioned in {mentions} forum threads{src}")
+        reasons.append(f"popular with other listeners{src}")
     elif mentions == 1:
-        reasons.append(f"suggested in a forum thread{src}")
+        reasons.append(f"picked up from other listeners{src}")
     avg_sent = 0.0
     snippets = candidate.get("snippets") or []
     if snippets:
         avg_sent = sum(snippet_sentiment(s) for s in snippets) / len(snippets)
     if avg_sent > 0.3:
-        reasons.append("forum sentiment is strongly positive")
+        reasons.append("crowd sentiment is strongly positive")
     if candidate.get("feedback_boost", 0) > 0:
         reasons.append("you've liked similar picks before")
     if not reasons:
-        reasons.append("broadly popular in recommendation threads")
+        reasons.append("broadly popular with other listeners")
     why = "; ".join(reasons)
     return f"Recommended because it {why}."
 

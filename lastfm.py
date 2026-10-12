@@ -23,8 +23,10 @@ Notes on the API:
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote_plus
 
 import requests
 
@@ -140,3 +142,170 @@ def get_all_recent_tracks(api_key: str, username: str,
         page += 1
         time.sleep(1.0 / MAX_REQ_PER_SEC)
     return tracks[:total_limit]
+
+
+# ---------------------------------------------------------------------------
+# Candidate mining: turn "artists like mine" into recommendable tracks.
+# Used by forum.mine_recommendations as the live candidate source (Reddit's
+# anonymous JSON API now 403s script clients). Same politeness rules as the
+# scrobble import: short sleeps between calls, ~5 req/sec max.
+# ---------------------------------------------------------------------------
+
+def _as_list(value) -> list:
+    """Last.fm returns a single object instead of a list when there's one."""
+    if not value:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_similar_artists(api_key: str, artist: str,
+                        limit: int = 5) -> list[dict]:
+    """Artists Last.fm considers similar: [{name, match}].
+
+    `match` is a 0–1 similarity score. Raises LastfmError on any failure.
+    """
+    if not api_key or not artist:
+        raise LastfmError("API key and artist are required.")
+    body = _request(api_key, {
+        "method": "artist.getSimilar",
+        "artist": artist,
+        "limit": max(1, min(100, limit)),
+    })
+    items = _as_list((body.get("similarartists") or {}).get("artist"))
+    out = []
+    for item in items:
+        name = _text(item.get("name")).strip()
+        if not name:
+            continue
+        out.append({"name": name,
+                    "match": _to_float(item.get("match"))})
+    return out
+
+
+def get_artist_top_tracks(api_key: str, artist: str,
+                          limit: int = 5) -> list[dict]:
+    """An artist's most-played tracks: [{title, artist, listeners, playcount}].
+
+    Raises LastfmError on any failure.
+    """
+    if not api_key or not artist:
+        raise LastfmError("API key and artist are required.")
+    body = _request(api_key, {
+        "method": "artist.getTopTracks",
+        "artist": artist,
+        "limit": max(1, min(50, limit)),
+    })
+    items = _as_list((body.get("toptracks") or {}).get("track"))
+    out = []
+    for item in items:
+        title = _text(item.get("name")).strip()
+        if not title:
+            continue
+        # Nested artist is {"name": ...} here (unlike recenttracks' #text).
+        nested = item.get("artist")
+        nested_name = (_text(nested)
+                       or (nested.get("name") if isinstance(nested, dict)
+                           else ""))
+        out.append({
+            "title": title,
+            "artist": nested_name.strip() or artist,
+            "listeners": _to_int(item.get("listeners")),
+            "playcount": _to_int(item.get("playcount")),
+        })
+    return out
+
+
+def _mentions_from_listeners(listeners: int) -> int:
+    """Bucket raw listener counts onto the old mention-count scale.
+
+    forum_score() log-scales `mentions` and caps at ~10, so feeding it raw
+    listener counts (millions) would pin every candidate at the max and kill
+    differentiation. log10 bucketing keeps the same ordering and spread on a
+    1–7ish scale: 10M listeners -> 7, 100k -> 5, 1k -> 3.
+    """
+    return max(1, round(math.log10(max(1, listeners))))
+
+
+def mine_candidates(api_key: str, seed_artists: list[str],
+                    max_artists: int = 3, similar_per_artist: int = 4,
+                    tracks_per_artist: int = 3,
+                    sleep: float = 0.25) -> dict:
+    """Build recommendation candidates from Last.fm similarity data.
+
+    For each seed artist: similar artists -> each one's top tracks.
+    Returns {"candidates": [...], "sources": [{"title", "url"}]}.
+    Candidate dicts match the shape recommender.py expects
+    (title, artist, genre, tags, mentions, sources, snippets).
+
+    Raises LastfmError (or RuntimeError when nothing comes back) — the
+    caller falls back to the built-in sample dataset.
+    """
+    if not api_key:
+        raise LastfmError(
+            "LASTFM_API_KEY must be set (see README 'Last.fm integration').")
+    artists = [a for a in dict.fromkeys(seed_artists) if a][:max_artists]
+    if not artists:
+        raise RuntimeError("no seed artists to mine from")
+
+    aggregate: dict[tuple[str, str], dict] = {}
+    sources: list[dict] = []
+    for seed in artists:
+        similars = get_similar_artists(api_key, seed,
+                                       limit=similar_per_artist)
+        time.sleep(sleep)
+        for sim in similars:
+            sim_name, match = sim["name"], sim["match"]
+            sources.append({
+                "title": (f"Last.fm: top tracks of {sim_name} "
+                          f"(similar to {seed}, match {match:.2f})"),
+                "url": ("https://www.last.fm/music/"
+                        + quote_plus(sim_name)),
+            })
+            tracks = get_artist_top_tracks(api_key, sim_name,
+                                           limit=tracks_per_artist)
+            time.sleep(sleep)
+            for t in tracks:
+                key = (t["title"].lower(), t["artist"].lower())
+                mentions = _mentions_from_listeners(t["listeners"])
+                snippet = (f"Top track of {t['artist']} — similar to {seed} "
+                           f"on Last.fm (match {match:.2f}); "
+                           f"{t['listeners']:,} listeners")
+                existing = aggregate.get(key)
+                if existing:
+                    # Same track via two similar artists: keep the stronger
+                    # signal, merge provenance.
+                    if mentions > existing["mentions"]:
+                        existing["mentions"] = mentions
+                        existing["snippets"] = [snippet]
+                    for s in (f"https://www.last.fm/music/"
+                              + quote_plus(t["artist"]),):
+                        if s not in existing["sources"]:
+                            existing["sources"].append(s)
+                else:
+                    aggregate[key] = {
+                        "title": t["title"], "artist": t["artist"],
+                        "genre": "", "tags": [],
+                        "mentions": mentions,
+                        "sources": ["https://www.last.fm/music/"
+                                    + quote_plus(t["artist"])],
+                        "snippets": [snippet],
+                    }
+    candidates = sorted(aggregate.values(),
+                        key=lambda c: c["mentions"], reverse=True)
+    if not candidates:
+        raise RuntimeError("Last.fm mining returned no candidates")
+    return {"candidates": candidates, "sources": sources}

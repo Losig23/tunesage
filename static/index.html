@@ -81,7 +81,7 @@
     <h2>✨ Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
     <div id="recNotice"></div>
     <div id="recs"><p class="threads">Loading…</p></div>
-    <h3 style="font-size:.95rem;color:var(--muted)">Forum threads mined</h3>
+    <h3 style="font-size:.95rem;color:var(--muted)">Sources mined</h3>
     <div id="threads" class="threads"></div>
   </section>
 </div>
@@ -107,20 +107,22 @@ async function loadTop() {
 }
 
 async function loadRecs(refresh = false) {
-  $('recs').innerHTML = '<p class="threads">Mining forums & scoring…</p>';
+  $('recs').innerHTML = '<p class="threads">Mining candidates & scoring…</p>';
   const data = await api(`/api/recommendations?limit=10&refresh=${refresh ? 1 : 0}`);
   const srcNote = data.source === 'fallback'
-    ? '⚠️ Reddit was unreachable, so these come from a built-in sample dataset (see <code>forum.py</code> fallback).'
-    : `⛏️ Mined live from Reddit${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`;
+    ? '⚠️ Live candidate mining was unreachable, so these come from a built-in sample dataset.'
+    : data.source === 'lastfm'
+    ? `⛏️ Mined live from Last.fm — top tracks of artists similar to yours${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`
+    : `⛏️ Mined live${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`;
   $('recNotice').innerHTML = `<div class="notice">${srcNote}<br>
-    Weights — content <b>${data.weights.w_content}</b> · forum <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
+    Weights — content <b>${data.weights.w_content}</b> · crowd <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
     (they adapt as you vote 👍/👎).</div>`;
   $('recs').innerHTML = data.songs.length ? data.songs.map((s, i) => `
     <div class="rec"><span class="rank">#${i + 1}</span>
       <div class="meta">
         <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span></div>
         <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
-        <div class="scores">score ${s.score} · content ${s.content_score} · forum ${s.forum_score} · feedback ${s.feedback_boost}</div>
+        <div class="scores">score ${s.score} · content ${s.content_score} · crowd ${s.forum_score} · feedback ${s.feedback_boost}</div>
         <div class="why">${esc(s.why)}</div>
       </div>
       <div class="votes">
@@ -129,7 +131,7 @@ async function loadRecs(refresh = false) {
       </div></div>`).join('')
     : '<p class="threads">Log some listens first, then come back for picks!</p>';
   $('threads').innerHTML = (data.threads || []).map(t =>
-    t.url ? `• <a href="${t.url}" target="_blank" rel="noopener">${esc(t.title)}</a> <span>r/${esc(t.subreddit)}</span><br>`
+    t.url ? `• <a href="${t.url}" target="_blank" rel="noopener">${esc(t.title)}</a>${t.subreddit ? ` <span>r/${esc(t.subreddit)}</span>` : ''}<br>`
           : `• ${esc(t.title)}<br>`).join('') || '<p>—</p>';
 }
 
