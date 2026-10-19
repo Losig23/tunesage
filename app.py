@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()  # populate os.environ from .env (if present); real env vars win
 
 import db
+import bpm as bpm_client
 import forum as forum_miner
 import lastfm as lastfm_client
 import recommender as engine
@@ -75,6 +76,8 @@ def create_app() -> Flask:
 
         if not refresh:
             cached = db.get_cached_recommendations()
+            if cached is not None and cached.get("v") != RECS_CACHE_VERSION:
+                cached = None  # stale shape (e.g. pre-streams): re-mine
             if cached is not None:
                 cached["songs"] = cached["songs"][:limit]
                 cached["cached"] = True
@@ -104,11 +107,27 @@ def create_app() -> Flask:
         for c in ranked:
             c["why"] = engine.explain(c, profile_terms)
 
+        # Tempo enrichment (GetSongBPM): best-effort, persistently cached.
+        # Without a key the popularity streams still work; tempo tabs hide.
+        bpm_key = os.environ.get("GETSONGBPM_API_KEY", "").strip()
+        tempo_available = False
+        if bpm_key:
+            try:
+                bpm_client.fill_tempos(bpm_key, ranked[:40])
+                tempo_available = True
+            except Exception:
+                pass  # enrichment must never break recommendations
+
+        streams = {k: v[:limit]
+                   for k, v in engine.split_streams(ranked).items()}
+        if tempo_available:
+            streams.update(
+                {k: v[:limit]
+                 for k, v in engine.split_tempo_streams(ranked).items()})
         payload = {"songs": ranked[:limit], "threads": mined["threads"][:10],
                    "source": mined["source"], "weights": weights,
-                   "streams": {k: v[:limit]
-                               for k, v in
-                               engine.split_streams(ranked).items()},
+                   "streams": streams, "tempo_available": tempo_available,
+                   "v": RECS_CACHE_VERSION,
                    "cached": False}
         db.save_recommendations(payload)
         return jsonify(payload)
@@ -190,6 +209,11 @@ def _lastfm_config() -> tuple[str, str]:
     """(api_key, username) from the environment; empty strings when unset."""
     return (os.environ.get("LASTFM_API_KEY", "").strip(),
             os.environ.get("LASTFM_USERNAME", "").strip())
+
+
+# Bump when the recommendations payload shape changes so stale cached
+# payloads (which lack new keys like "streams") are never served.
+RECS_CACHE_VERSION = 3
 
 
 app = create_app()

@@ -109,3 +109,35 @@ def test_recommendations_payload_includes_streams(app_client, monkeypatch):
     assert set(body["streams"]) == {"mainstream", "niche", "underground"}
     total = sum(len(v) for v in body["streams"].values())
     assert total == len(body["songs"])  # every song lands in exactly one tier
+
+
+def test_recommendations_tempo_unavailable_without_key(app_client, monkeypatch):
+    monkeypatch.delenv("GETSONGBPM_API_KEY", raising=False)
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"):
+        body = app_client.get("/api/recommendations?limit=5&refresh=1").get_json()
+    assert body["tempo_available"] is False
+    assert "upbeat" not in body["streams"]
+
+
+def test_recommendations_tempo_streams_with_key(app_client, monkeypatch):
+    monkeypatch.setenv("GETSONGBPM_API_KEY", "bpmkey")
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    fake_tempos = {"Borderline": 140.0}
+
+    def _fake_fill(api_key, cands, sleep=0.2):
+        for c in cands:
+            if c["title"] in fake_tempos:
+                c["tempo"] = fake_tempos[c["title"]]
+        return len(fake_tempos)
+
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"), \
+         patch("bpm.fill_tempos", side_effect=_fake_fill):
+        body = app_client.get("/api/recommendations?limit=5&refresh=1").get_json()
+    assert body["tempo_available"] is True
+    assert [s["title"] for s in body["streams"]["upbeat"]] == ["Borderline"]
+    assert body["streams"]["slowburn"] == []

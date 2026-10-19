@@ -102,14 +102,12 @@
   <section>
     <h2>✨ Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
     <div id="recNotice"></div>
-    <div class="tabs" id="streamTabs">
-      <button class="tab active" data-stream="all">✨ For you</button>
-      <button class="tab" data-stream="mainstream">📈 Mainstream</button>
-      <button class="tab" data-stream="niche">🪩 Niche</button>
-      <button class="tab" data-stream="underground">🕳️ Underground</button>
-    </div>
+    <div class="tabs" id="streamTabs"></div>
     <p class="threads" id="streamDesc"></p>
     <div id="recs"><p class="threads">Loading…</p></div>
+    <h3 style="font-size:.95rem;color:var(--muted)">Sources mined</h3>
+    <div id="threads" class="threads"></div>
+    <p class="threads">Listening data by <a href="https://www.last.fm" target="_blank" rel="noopener">Last.fm</a> · Tempo data by <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a></p>
     <h3 style="font-size:.95rem;color:var(--muted)">Sources mined</h3>
     <div id="threads" class="threads"></div>
   </section>
@@ -190,14 +188,36 @@ async function loadTop() {
   setWallpaper(firstArt);
 }
 
+const STREAM_TABS = [
+  ['all', '✨ For you'],
+  ['mainstream', '📈 Mainstream'],
+  ['niche', '🪩 Niche'],
+  ['underground', '🕳️ Underground'],
+  ['upbeat', '⚡ Upbeat'],
+  ['slowburn', '🌙 Slow burn'],
+];
 const STREAM_DESC = {
   all: 'Ranked for your taste across everything we found.',
   mainstream: 'Big, proven crowd-pleasers — the most-listened tracks among your candidates.',
   niche: 'Cult favorites — a solid following, not chart-toppers.',
-  underground: 'Deep cuts — the least-heard tracks in your candidate pool. Highest discovery potential.'
+  underground: 'Deep cuts — the least-heard tracks in your candidate pool. Highest discovery potential.',
+  upbeat: 'High-energy picks — 120+ BPM, dancefloor territory.',
+  slowburn: 'Downtempo and ballads — under 100 BPM.',
 };
 let lastRecs = null;
 let activeStream = 'all';
+
+function renderTabs() {
+  const avail = ['all', 'mainstream', 'niche', 'underground'];
+  if (lastRecs && lastRecs.tempo_available) avail.push('upbeat', 'slowburn');
+  if (!avail.includes(activeStream)) activeStream = 'all';
+  $('streamTabs').innerHTML = avail.map(k => {
+    const label = STREAM_TABS.find(t => t[0] === k)[1];
+    return `<button class="tab${k === activeStream ? ' active' : ''}" data-stream="${k}">${label}</button>`;
+  }).join('');
+  document.querySelectorAll('#streamTabs .tab').forEach(b =>
+    b.addEventListener('click', () => { activeStream = b.dataset.stream; renderStream(); }));
+}
 
 function recCard(s, i) {
   return `
@@ -205,7 +225,7 @@ function recCard(s, i) {
       <div class="meta">
         <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span>${s.via ? `<span class="via">via ${esc(s.via)}</span>` : ''}</div>
         <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
-        <div class="scores">score ${s.score} · content ${s.content_score} · crowd ${s.forum_score} · feedback ${s.feedback_boost}</div>
+        <div class="scores">score ${s.score} · content ${s.content_score} · crowd ${s.forum_score} · feedback ${s.feedback_boost}${s.tempo ? ` · ${Math.round(s.tempo)} BPM` : ''}</div>
         <div class="why">${esc(s.why)}</div>
       </div>
       <div class="votes">
@@ -216,18 +236,19 @@ function recCard(s, i) {
 
 function renderStream() {
   if (!lastRecs) return;
+  renderTabs();
   const streams = lastRecs.streams || {};
   const songs = activeStream === 'all' ? lastRecs.songs
     : (streams[activeStream] || lastRecs.songs);
-  $('streamDesc').textContent = STREAM_DESC[activeStream] || '';
+  $('streamDesc').textContent =
+    (!lastRecs.streams && activeStream !== 'all')
+      ? 'Streams need fresh data — hit Refresh (re-mine).'
+      : (STREAM_DESC[activeStream] || '');
   $('recs').innerHTML = songs.length ? songs.map(recCard).join('')
     : '<p class="threads">Log some listens first, then come back for picks!</p>';
   document.querySelectorAll('#streamTabs .tab').forEach(b =>
     b.classList.toggle('active', b.dataset.stream === activeStream));
 }
-
-document.querySelectorAll('#streamTabs .tab').forEach(b =>
-  b.addEventListener('click', () => { activeStream = b.dataset.stream; renderStream(); }));
 
 async function loadRecs(refresh = false) {
   $('recs').innerHTML = '<p class="threads">Mining candidates & scoring…</p>';

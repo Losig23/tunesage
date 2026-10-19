@@ -187,6 +187,26 @@ def split_streams(ranked: list[dict]) -> dict:
     return streams
 
 
+# Tempo-stream thresholds (BPM). Upbeat ≈ dance/club territory, slow burn ≈
+# downtempo/ballads; the middle stays in the popularity streams.
+UPBEAT_MIN_BPM = 120
+SLOWBURN_MAX_BPM = 100
+
+
+def split_tempo_streams(ranked: list[dict]) -> dict:
+    """Split ranked candidates by tempo into upbeat / slow-burn streams.
+
+    Only candidates with a known tempo participate — tracks without BPM
+    data are left out rather than guessed at. Each stream keeps hybrid-rank
+    order.
+    """
+    upbeat = [c for c in ranked
+              if (c.get("tempo") or 0) >= UPBEAT_MIN_BPM]
+    slowburn = [c for c in ranked
+                if 0 < (c.get("tempo") or 0) <= SLOWBURN_MAX_BPM]
+    return {"upbeat": upbeat, "slowburn": slowburn}
+
+
 def explain(candidate: dict, profile_terms: list[str]) -> str:
     """Human-readable 'why this recommendation'.
 

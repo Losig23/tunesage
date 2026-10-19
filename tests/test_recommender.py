@@ -145,3 +145,16 @@ def test_split_streams_small_inputs_dont_crash():
                                         "underground": []}
     s = engine.split_streams(_ranked(2))
     assert len(s["mainstream"]) == 1 and len(s["underground"]) == 1
+
+
+def test_split_tempo_streams_thresholds():
+    ranked = [
+        {"title": "Fast", "score": 0.9, "tempo": 128},
+        {"title": "Mid", "score": 0.8, "tempo": 110},
+        {"title": "Slow", "score": 0.7, "tempo": 85},
+        {"title": "Unknown", "score": 0.6},  # no tempo: excluded, not guessed
+        {"title": "Edge", "score": 0.5, "tempo": 120},
+    ]
+    streams = engine.split_tempo_streams(ranked)
+    assert [s["title"] for s in streams["upbeat"]] == ["Fast", "Edge"]
+    assert [s["title"] for s in streams["slowburn"]] == ["Slow"]

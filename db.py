@@ -60,6 +60,15 @@ CREATE TABLE IF NOT EXISTS external_imports (
     song_id INTEGER NOT NULL,           -- FK -> songs(id)
     PRIMARY KEY (source, played_at)
 );
+-- Tempo lookups (GetSongBPM) are cached forever: BPM never changes, so each
+-- unique track is looked up once no matter how often mining refreshes.
+CREATE TABLE IF NOT EXISTS bpm_cache (
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    tempo REAL NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (title, artist)
+);
 """
 
 
@@ -313,5 +322,35 @@ def last_import_at(source: str, path: Path | str = DB_PATH) -> str | None:
             " WHERE source = ?",
             (source,)).fetchone()
         return row["m"] if row and row["m"] else None
+    finally:
+        conn.close()
+
+
+# ---- tempo cache (GetSongBPM) --------------------------------------------------
+
+def get_tempo(title: str, artist: str,
+              path: Path | str = DB_PATH) -> float | None:
+    """Cached BPM for a track, or None if never looked up."""
+    conn = get_conn(path)
+    try:
+        row = conn.execute(
+            "SELECT tempo FROM bpm_cache WHERE title = ? AND artist = ?",
+            (title.strip(), artist.strip())).fetchone()
+        return float(row["tempo"]) if row else None
+    finally:
+        conn.close()
+
+
+def set_tempo(title: str, artist: str, tempo: float,
+              path: Path | str = DB_PATH) -> None:
+    """Cache a track's BPM (INSERT OR REPLACE — tempo never changes)."""
+    conn = get_conn(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO bpm_cache (title, artist, tempo, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (title.strip(), artist.strip(), float(tempo), int(time.time())),
+        )
+        conn.commit()
     finally:
         conn.close()

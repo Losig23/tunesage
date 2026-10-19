@@ -331,7 +331,7 @@ def test_mine_candidates_builds_ranked_unique_candidates():
          patch("lastfm.time.sleep"):  # don't actually sleep in tests
         mined = lastfm.mine_candidates("key123", ["Arctic Monkeys"],
                                        max_artists=1, similar_per_artist=2,
-                                       tracks_per_artist=2)
+                                       tracks_per_artist=2, hop2_seeds=0)
     titles = [c["title"] for c in mined["candidates"]]
     assert titles.count("Borderline") == 1  # deduped, kept max listeners
     assert mined["candidates"][0]["mentions"] >= \
@@ -410,7 +410,7 @@ def test_mine_candidates_carries_image_through():
          patch("lastfm.time.sleep"):
         mined = lastfm.mine_candidates("key123", ["Arctic Monkeys"],
                                        max_artists=1, similar_per_artist=1,
-                                       tracks_per_artist=1)
+                                       tracks_per_artist=1, hop2_seeds=0)
     assert mined["candidates"][0]["image"] == "http://img/xl.png"
 
 
@@ -464,7 +464,50 @@ def test_mine_candidates_carries_listeners_and_via():
          patch("lastfm.time.sleep"):
         mined = lastfm.mine_candidates("key123", ["Arctic Monkeys"],
                                        max_artists=1, similar_per_artist=1,
-                                       tracks_per_artist=1)
+                                       tracks_per_artist=1, hop2_seeds=0)
     cand = mined["candidates"][0]
     assert cand["listeners"] == 900000
     assert cand["via"] == "Arctic Monkeys"
+
+
+def test_mine_candidates_hop2_discovers_deeper_artists():
+    sim_am = _similar_payload(("Tame Impala", 0.9), ("MGMT", 0.7))
+    sim_tame = _similar_payload(("Pond", 0.8), ("Unknown Mortal Orchestra", 0.6))
+    def _tt(artist, title):
+        return _toptracks_payload(artist, (title, 50000, 1))
+    # call order: hop1 similar, hop2 similar, then top tracks per artist
+    mock = _mock_get([sim_am, sim_tame,
+                      _tt("Tame Impala", "Borderline"),
+                      _tt("MGMT", "Kids"),
+                      _tt("Pond", "Paint Me Silver"),
+                      _tt("Unknown Mortal Orchestra", "Multi-Love")])
+    with patch("lastfm.requests.get", mock), \
+         patch("lastfm.time.sleep"):
+        mined = lastfm.mine_candidates(
+            "key123", ["Arctic Monkeys"],
+            max_artists=1, similar_per_artist=2, tracks_per_artist=1,
+            hop2_seeds=1, hop2_similar=2)
+    by_title = {c["title"]: c for c in mined["candidates"]}
+    # hop-2 artist surfaced with provenance chain
+    assert by_title["Paint Me Silver"]["via"] == "Arctic Monkeys → Tame Impala"
+    assert by_title["Borderline"]["via"] == "Arctic Monkeys"
+    assert len(mined["candidates"]) == 4
+
+
+def test_mine_candidates_hop2_failure_does_not_kill_mine():
+    sim_resp = MagicMock(status_code=200)
+    sim_resp.json.return_value = _similar_payload(("Tame Impala", 0.9))
+    err_resp = MagicMock(status_code=500)
+    err_resp.text = "server exploded"
+    tracks_resp = MagicMock(status_code=200)
+    tracks_resp.json.return_value = _toptracks_payload(
+        "Tame Impala", ("Borderline", 50000, 1))
+    mock = MagicMock(side_effect=[sim_resp, err_resp, tracks_resp])
+    with patch("lastfm.requests.get", mock), \
+         patch("lastfm.time.sleep"):
+        mined = lastfm.mine_candidates(
+            "key123", ["Arctic Monkeys"],
+            max_artists=1, similar_per_artist=1, tracks_per_artist=1,
+            hop2_seeds=1, hop2_similar=1)
+    # hop-1 results survive the failed hop-2 call
+    assert [c["title"] for c in mined["candidates"]] == ["Borderline"]

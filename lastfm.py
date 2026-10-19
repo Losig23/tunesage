@@ -263,15 +263,21 @@ def _mentions_from_listeners(listeners: int) -> int:
 
 
 def mine_candidates(api_key: str, seed_artists: list[str],
-                    max_artists: int = 3, similar_per_artist: int = 4,
-                    tracks_per_artist: int = 3,
-                    sleep: float = 0.25) -> dict:
+                    max_artists: int = 4, similar_per_artist: int = 5,
+                    tracks_per_artist: int = 2, hop2_seeds: int = 2,
+                    hop2_similar: int = 3, sleep: float = 0.25) -> dict:
     """Build recommendation candidates from Last.fm similarity data.
 
-    For each seed artist: similar artists -> each one's top tracks.
+    Two-hop traversal: for each seed artist, take similar artists (hop 1),
+    then similar artists *of the closest hop-1 matches* (hop 2, match score
+    decayed 0.8x per hop). Hop 2 is where real discovery happens — artists
+    two steps removed from your listening, which a flat similar-artists
+    list would never surface. Then top tracks for every similar artist found.
+
     Returns {"candidates": [...], "sources": [{"title", "url"}]}.
     Candidate dicts match the shape recommender.py expects
-    (title, artist, genre, tags, mentions, sources, snippets).
+    (title, artist, genre, tags, mentions, listeners, via, image,
+    sources, snippets).
 
     Raises LastfmError (or RuntimeError when nothing comes back) — the
     caller falls back to the built-in sample dataset.
@@ -282,54 +288,79 @@ def mine_candidates(api_key: str, seed_artists: list[str],
     artists = [a for a in dict.fromkeys(seed_artists) if a][:max_artists]
     if not artists:
         raise RuntimeError("no seed artists to mine from")
+    seed_set = {a.lower() for a in artists}
 
-    aggregate: dict[tuple[str, str], dict] = {}
+    # Hop 1 + hop 2 similar-artist expansion.
+    similar: dict[str, dict] = {}  # name -> {"match", "via"}
     sources: list[dict] = []
     for seed in artists:
-        similars = get_similar_artists(api_key, seed,
-                                       limit=similar_per_artist)
+        hop1 = get_similar_artists(api_key, seed, limit=similar_per_artist)
         time.sleep(sleep)
-        for sim in similars:
-            sim_name, match = sim["name"], sim["match"]
-            sources.append({
-                "title": (f"Last.fm: top tracks of {sim_name} "
-                          f"(similar to {seed}, match {match:.2f})"),
-                "url": ("https://www.last.fm/music/"
-                        + quote_plus(sim_name)),
-            })
-            tracks = get_artist_top_tracks(api_key, sim_name,
-                                           limit=tracks_per_artist)
+        for sim in hop1:
+            name = sim["name"]
+            if name.lower() in seed_set:
+                continue
+            if name not in similar or sim["match"] > similar[name]["match"]:
+                similar[name] = {"match": sim["match"], "via": seed}
+        for hop1sim in sorted(hop1, key=lambda s: s["match"],
+                              reverse=True)[:hop2_seeds]:
+            try:
+                hop2 = get_similar_artists(api_key, hop1sim["name"],
+                                           limit=hop2_similar)
+            except LastfmError:
+                continue  # one bad hop must not kill the whole mine
             time.sleep(sleep)
-            for t in tracks:
-                key = (t["title"].lower(), t["artist"].lower())
-                mentions = _mentions_from_listeners(t["listeners"])
-                snippet = (f"Top track of {t['artist']} — similar to {seed} "
-                           f"on Last.fm (match {match:.2f}); "
-                           f"{t['listeners']:,} listeners")
-                existing = aggregate.get(key)
-                if existing:
-                    # Same track via two similar artists: keep the stronger
-                    # signal, merge provenance.
-                    if mentions > existing["mentions"]:
-                        existing["mentions"] = mentions
-                        existing["listeners"] = t["listeners"]
-                        existing["snippets"] = [snippet]
-                    for s in (f"https://www.last.fm/music/"
-                              + quote_plus(t["artist"]),):
-                        if s not in existing["sources"]:
-                            existing["sources"].append(s)
-                else:
-                    aggregate[key] = {
-                        "title": t["title"], "artist": t["artist"],
-                        "genre": "", "tags": [],
-                        "mentions": mentions,
-                        "listeners": t["listeners"],
-                        "via": seed,  # which of your artists led us here
-                        "image": t.get("image", ""),
-                        "sources": ["https://www.last.fm/music/"
-                                    + quote_plus(t["artist"])],
-                        "snippets": [snippet],
-                    }
+            for sim in hop2:
+                name = sim["name"]
+                if name.lower() in seed_set or name in similar:
+                    continue
+                similar[name] = {
+                    "match": sim["match"] * 0.8,  # similarity dilutes w/ distance
+                    "via": f"{seed} → {hop1sim['name']}",
+                }
+    for sim_name, info in similar.items():
+        sources.append({
+            "title": (f"Last.fm: top tracks of {sim_name} "
+                      f"(similar to {info['via']}, match {info['match']:.2f})"),
+            "url": "https://www.last.fm/music/" + quote_plus(sim_name),
+        })
+
+    aggregate: dict[tuple[str, str], dict] = {}
+    for sim_name, info in similar.items():
+        match = info["match"]
+        tracks = get_artist_top_tracks(api_key, sim_name,
+                                       limit=tracks_per_artist)
+        time.sleep(sleep)
+        for t in tracks:
+            key = (t["title"].lower(), t["artist"].lower())
+            mentions = _mentions_from_listeners(t["listeners"])
+            snippet = (f"Top track of {t['artist']} — similar to {info['via']} "
+                       f"on Last.fm (match {match:.2f}); "
+                       f"{t['listeners']:,} listeners")
+            existing = aggregate.get(key)
+            if existing:
+                # Same track via two similar artists: keep the stronger
+                # signal, merge provenance.
+                if mentions > existing["mentions"]:
+                    existing["mentions"] = mentions
+                    existing["listeners"] = t["listeners"]
+                    existing["snippets"] = [snippet]
+                for s in (f"https://www.last.fm/music/"
+                          + quote_plus(t["artist"]),):
+                    if s not in existing["sources"]:
+                        existing["sources"].append(s)
+            else:
+                aggregate[key] = {
+                    "title": t["title"], "artist": t["artist"],
+                    "genre": "", "tags": [],
+                    "mentions": mentions,
+                    "listeners": t["listeners"],
+                    "via": info["via"],  # which of your artists led us here
+                    "image": t.get("image", ""),
+                    "sources": ["https://www.last.fm/music/"
+                                + quote_plus(t["artist"])],
+                    "snippets": [snippet],
+                }
     candidates = sorted(aggregate.values(),
                         key=lambda c: c["mentions"], reverse=True)
     if not candidates:
