@@ -13,6 +13,9 @@ import pytest
 import db
 import lastfm
 
+# Original, before the _stub_artwork fixture below replaces it.
+_REAL_GET_TRACK_ALBUM_ART = lastfm.get_track_album_art
+
 
 @pytest.fixture(autouse=True)
 def _stub_itunes_artwork(monkeypatch):
@@ -21,6 +24,8 @@ def _stub_itunes_artwork(monkeypatch):
     import artwork
     monkeypatch.setattr(artwork, "fetch_itunes_artwork",
                         lambda title, artist: "")
+    monkeypatch.setattr(lastfm, "get_track_album_art",
+                        lambda api_key, title, artist: "")
 
 
 @pytest.fixture
@@ -633,3 +638,47 @@ def test_prefer_itunes_artwork_keeps_lastfm_on_miss():
     # autouse fixture stubs fetch_itunes_artwork -> "" (a miss)
     lastfm._prefer_itunes_artwork(cands, max_workers=1)
     assert cands[0]["image"] == "http://img/xl.png"
+
+
+def test_get_track_album_art_returns_album_image():
+    body = {"track": {"name": "X",
+                      "album": {"image": [
+                          {"#text": "http://img/album.png",
+                           "size": "extralarge"}]}}}
+    r = MagicMock(status_code=200)
+    r.json.return_value = body
+    with patch.object(lastfm, "get_track_album_art",
+                      _REAL_GET_TRACK_ALBUM_ART), \
+         patch("lastfm.requests.get", return_value=r):
+        assert lastfm.get_track_album_art("k", "X", "Y") == \
+            "http://img/album.png"
+
+
+def test_get_track_album_art_empty_without_album():
+    r = MagicMock(status_code=200)
+    r.json.return_value = {"track": {"name": "X"}}
+    with patch.object(lastfm, "get_track_album_art",
+                      _REAL_GET_TRACK_ALBUM_ART), \
+         patch("lastfm.requests.get", return_value=r):
+        assert lastfm.get_track_album_art("k", "X", "Y") == ""
+
+
+def test_resolve_album_art_fills_only_blanks():
+    cands = [{"title": "A", "artist": "Art1", "image": ""},
+             {"title": "B", "artist": "Art2", "image": "http://img/keep.png"}]
+    with patch.object(lastfm, "get_track_album_art",
+                      return_value="http://img/album.png") as mock_art, \
+         patch("lastfm.time.sleep"):
+        lastfm._resolve_album_art("k", cands)
+    assert cands[0]["image"] == "http://img/album.png"
+    assert cands[1]["image"] == "http://img/keep.png"
+    mock_art.assert_called_once_with("k", "A", "Art1")
+
+
+def test_resolve_album_art_swallows_lastfm_errors():
+    cands = [{"title": "A", "artist": "Art1", "image": ""}]
+    with patch.object(lastfm, "get_track_album_art",
+                      side_effect=lastfm.LastfmError("boom")), \
+         patch("lastfm.time.sleep"):
+        lastfm._resolve_album_art("k", cands)  # must not raise
+    assert cands[0]["image"] == ""

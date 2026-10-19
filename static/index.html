@@ -271,7 +271,7 @@ async function loadRecs(refresh = false) {
     ? '📭 No listening history yet — log or import some scrobbles.'
     : `⚠️ Live mining failed${data.mining_error ? ` (${esc(data.mining_error)})` : ''} — showing the sample dataset.`;
   $('recNotice').innerHTML = `<div class="notice">${srcNote}<br>
-    Weights — content <b>${data.weights.w_content}</b> · crowd <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
+    Weights — content <b>${Math.round(data.weights.w_content * 100)}</b> · crowd <b>${Math.round(data.weights.w_forum * 100)}</b> · feedback <b>${Math.round(data.weights.w_feedback * 100)}</b>
     (they adapt as you vote 👍/👎).${data.tempo_error ? `<br>⚠️ Tempo data unavailable (${esc(data.tempo_error)}).` : ''}</div>`;
   lastRecs = data;
   renderStream();

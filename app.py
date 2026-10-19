@@ -123,6 +123,8 @@ def create_app() -> Flask:
             except Exception:
                 pass  # enrichment must never break recommendations
             tempo_available = any(c.get("tempo") for c in ranked)
+        else:
+            tempo_error = "GETSONGBPM_API_KEY is not set."
 
         streams = {k: v[:limit]
                    for k, v in engine.split_streams(ranked).items()}

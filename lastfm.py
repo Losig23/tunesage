@@ -264,6 +264,22 @@ def get_artist_top_tracks(api_key: str, artist: str,
     return out
 
 
+def get_track_album_art(api_key: str, title: str, artist: str) -> str:
+    """Album artwork for a track via track.getInfo.
+
+    This is the same album-level art that scrobbles carry (user.getrecenttracks
+    attaches the album cover to every scrobble) — the closest thing to the
+    top-tracks method for mined candidates. Returns "" when unknown.
+    Raises LastfmError on transport/API failure.
+    """
+    if not api_key or not title or not artist:
+        return ""
+    body = _request(api_key, {"method": "track.getInfo",
+                              "artist": artist, "track": title})
+    track = body.get("track") or {}
+    return _largest_image(track.get("album") or {})
+
+
 def _mentions_from_listeners(listeners: int) -> int:
     """Bucket raw listener counts onto the old mention-count scale.
 
@@ -387,6 +403,7 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                         key=lambda c: c["mentions"], reverse=True)
     _blank_default_artwork(candidates)
     _prefer_itunes_artwork(candidates)
+    _resolve_album_art(api_key, candidates)
     if not candidates:
         raise RuntimeError("Last.fm mining returned no candidates")
     return {"candidates": candidates, "sources": sources}
@@ -407,6 +424,25 @@ def _prefer_itunes_artwork(candidates: list[dict], max_workers: int = 8) -> None
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         list(ex.map(_resolve, candidates))
+
+
+def _resolve_album_art(api_key: str, candidates: list[dict]) -> None:
+    """Fill remaining artwork gaps via track.getInfo album art.
+
+    Candidates still imageless after the iTunes pass get one paced
+    track.getInfo lookup each — the same album-level artwork scrobbles
+    carry. Best-effort: failures keep the placeholder.
+    """
+    for c in candidates:
+        if c.get("image"):
+            continue
+        try:
+            art = get_track_album_art(api_key, c["title"], c["artist"])
+        except LastfmError:
+            art = ""
+        if art:
+            c["image"] = art
+        time.sleep(0.2)
 
 
 def _blank_default_artwork(candidates: list[dict], min_artists: int = 3) -> None:

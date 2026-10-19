@@ -13,10 +13,13 @@ import forum
 
 @pytest.fixture(autouse=True)
 def _stub_itunes_artwork(monkeypatch):
-    """Route tests exercise mine_candidates; keep iTunes fallback off-net."""
+    """Route tests exercise mine_candidates; keep artwork lookups off-net."""
     import artwork
+    import lastfm
     monkeypatch.setattr(artwork, "fetch_itunes_artwork",
                         lambda title, artist: "")
+    monkeypatch.setattr(lastfm, "get_track_album_art",
+                        lambda api_key, title, artist: "")
 
 
 def _seeds():
