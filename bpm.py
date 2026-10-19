@@ -106,11 +106,11 @@ def fill_tempos(api_key: str, candidates: list[dict],
         if c.get("tempo"):
             continue
         title, artist = c.get("title", ""), c.get("artist", "")
-        cached = db.get_tempo(title, artist)
-        if cached is not None:
-            c["tempo"] = cached
-            continue
         try:
+            cached = db.get_tempo(title, artist)
+            if cached is not None:
+                c["tempo"] = cached
+                continue
             tempo = get_tempo(api_key, title, artist)
             lookups += 1
             time.sleep(sleep)

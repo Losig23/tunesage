@@ -369,3 +369,19 @@ def all_song_keys(path: Path | str = DB_PATH) -> set[tuple[str, str]]:
                  str(r["artist"]).strip().lower()) for r in rows}
     finally:
         conn.close()
+
+
+def voted_keys(path: Path | str = DB_PATH) -> set[tuple[str, str]]:
+    """(title, artist) pairs the user has voted on, lowercased/stripped.
+
+    Songs already judged (liked or disliked) are excluded from future
+    recommendation lists — a refresh shows new songs.
+    """
+    conn = get_conn(path)
+    try:
+        rows = conn.execute(
+            "SELECT song_title, artist FROM feedback").fetchall()
+        return {(str(r["song_title"]).strip().lower(),
+                 str(r["artist"]).strip().lower()) for r in rows}
+    finally:
+        conn.close()

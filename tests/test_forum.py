@@ -236,3 +236,21 @@ def test_tempo_error_surfaced_on_bad_key(app_client, monkeypatch):
             "/api/recommendations?limit=5&refresh=1").get_json()
     assert body["tempo_available"] is False
     assert "Invalid API Key" in (body["tempo_error"] or "")
+
+
+def test_voted_songs_excluded_from_recommendations(app_client, monkeypatch):
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    # vote up the mined candidate -> refresh must not show it again
+    db_module.record_feedback("Borderline", "Tame Impala", liked=True)
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"):
+        body = app_client.get(
+            "/api/recommendations?limit=10&refresh=1").get_json()
+    titles = [s["title"] for s in body["songs"]]
+    assert "Borderline" not in titles
+
+
+def test_voted_keys_roundtrip(tmpdb):
+    db_module.record_feedback("  Borderline ", "TAME IMPALA", liked=False)
+    assert db_module.voted_keys() == {("borderline", "tame impala")}

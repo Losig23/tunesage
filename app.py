@@ -92,9 +92,8 @@ def create_app() -> Flask:
             seeds, api_key=_lastfm_config()[0])
 
         # Deduplicate: never recommend anything already in the listening
-        # history (the full library, not just the top seeds used for the
-        # taste profile).
-        known = db.all_song_keys()
+        # history or already judged (a refresh shows new songs).
+        known = db.all_song_keys() | db.voted_keys()
         candidates = [c for c in mined["candidates"]
                       if (c["title"].lower(), c["artist"].lower()) not in known]
 

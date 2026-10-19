@@ -44,7 +44,7 @@ def tmpdb(tmp_path, monkeypatch):
     for name in ("log_listen", "top_songs", "already_imported",
                  "record_import", "last_import_at",
                  "get_cached_recommendations", "save_recommendations",
-                 "all_song_keys"):
+                 "all_song_keys", "voted_keys", "record_feedback"):
         monkeypatch.setattr(db, name, _bind(getattr(db, name)))
     return p
 
