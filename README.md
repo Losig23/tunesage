@@ -125,6 +125,16 @@ logged through the same `log_listen()` path as manual logging and recorded
 in the `external_imports` table, so a later import of the same play is a
 no-op.
 
+### Tempo data (GetSongBPM)
+
+The ⚡ Upbeat / 🌙 Slow burn streams need per-track BPM, which Last.fm
+doesn't provide. Tempo comes from [GetSongBPM](https://getsongbpm.com)
+(`bpm.py`; set `GETSONGBPM_API_KEY` in `.env` — free key at
+[getsongbpm.com/api](https://getsongbpm.com/api)). Lookups are cached in
+SQLite forever (BPM never changes), so each unique track costs exactly one
+API call. Tempo data by [GetSongBPM](https://getsongbpm.com), whose free
+tier requires this backlink — it's also in the dashboard footer.
+
 ## Deploy to Render (free)
 
 1. Push this repo to GitHub.
