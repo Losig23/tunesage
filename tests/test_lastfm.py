@@ -5,7 +5,6 @@ throwaway SQLite file — the fixture rebinds the db helpers' `path` default to
 it, so the Flask routes under test hit the temp DB, not tunesage.db.
 """
 
-import functools
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,34 +25,6 @@ def _stub_itunes_artwork(monkeypatch):
                         lambda title, artist: "")
     monkeypatch.setattr(lastfm, "get_track_album_art",
                         lambda api_key, title, artist: "")
-
-
-@pytest.fixture
-def tmpdb(tmp_path, monkeypatch):
-    """Temp DB + rebind db helpers used by the routes to use it."""
-    p = tmp_path / "lastfm_test.db"
-    db.init_db(p)
-
-    def _bind(fn):
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            kwargs.setdefault("path", p)
-            return fn(*args, **kwargs)
-        return wrapper
-
-    for name in ("log_listen", "top_songs", "already_imported",
-                 "record_import", "last_import_at",
-                 "get_cached_recommendations", "save_recommendations",
-                 "all_song_keys", "voted_keys", "record_feedback"):
-        monkeypatch.setattr(db, name, _bind(getattr(db, name)))
-    return p
-
-
-@pytest.fixture
-def app_client(tmpdb, monkeypatch):
-    monkeypatch.setenv("SECRET_KEY", "test-secret-key")
-    import app as app_module  # imported after SECRET_KEY is set
-    return app_module.app.test_client()
 
 
 @pytest.fixture
@@ -301,7 +272,7 @@ def _mock_get(payloads):
     return MagicMock(side_effect=resps)
 
 
-def test_get_similar_artists_parses_match_scores():
+def test_get_similar_artists_parses_match_scores(tmpdb):
     payload = _similar_payload(("Tame Impala", 0.92), ("MGMT", 0.71),
                                ("", 0.5))  # blank name skipped
     resp = MagicMock(status_code=200)
@@ -312,7 +283,7 @@ def test_get_similar_artists_parses_match_scores():
                     {"name": "MGMT", "match": 0.71}]
 
 
-def test_get_artist_top_tracks_parses_listeners():
+def test_get_artist_top_tracks_parses_listeners(tmpdb):
     payload = _toptracks_payload("Tame Impala",
                                  ("The Less I Know The Better", 2500000, 180000000),
                                  ("Borderline", 900000, 60000000))
@@ -332,7 +303,7 @@ def test_mentions_bucketing_keeps_scale_sane():
     assert lastfm._mentions_from_listeners(0) == 1  # never zero/negative
 
 
-def test_mine_candidates_builds_ranked_unique_candidates():
+def test_mine_candidates_builds_ranked_unique_candidates(tmpdb):
     similar = _similar_payload(("Tame Impala", 0.9), ("MGMT", 0.7))
     tame_tracks = _toptracks_payload(
         "Tame Impala", ("The Less I Know The Better", 2500000, 1),
@@ -405,7 +376,7 @@ def test_top_tracks_extracts_image_when_present():
     assert tracks[0]["image"] == "http://img/l.png"
 
 
-def test_top_tracks_missing_image_gives_blank():
+def test_top_tracks_missing_image_gives_blank(tmpdb):
     payload = {"toptracks": {"track": [
         {"name": "Borderline", "listeners": "900000", "playcount": "1",
          "artist": {"name": "Tame Impala"}}]}}
@@ -416,7 +387,7 @@ def test_top_tracks_missing_image_gives_blank():
     assert tracks[0]["image"] == ""
 
 
-def test_mine_candidates_carries_image_through():
+def test_mine_candidates_carries_image_through(tmpdb):
     similar = _similar_payload(("Tame Impala", 0.9))
     tracks = {"toptracks": {"track": [
         {"name": "Borderline", "listeners": "900000", "playcount": "1",
@@ -471,7 +442,7 @@ def test_import_route_stores_artwork(app_client, lastfm_env):
     assert db.top_songs()[0]["image_url"] == "http://img/xl.png"
 
 
-def test_mine_candidates_carries_listeners_and_via():
+def test_mine_candidates_carries_listeners_and_via(tmpdb):
     similar = _similar_payload(("Tame Impala", 0.9))
     tracks = {"toptracks": {"track": [
         {"name": "Borderline", "listeners": "900000", "playcount": "1",
@@ -486,7 +457,7 @@ def test_mine_candidates_carries_listeners_and_via():
     assert cand["via"] == "Arctic Monkeys"
 
 
-def test_mine_candidates_hop2_discovers_deeper_artists():
+def test_mine_candidates_hop2_discovers_deeper_artists(tmpdb):
     sim_am = _similar_payload(("Tame Impala", 0.9), ("MGMT", 0.7))
     sim_tame = _similar_payload(("Pond", 0.8), ("Unknown Mortal Orchestra", 0.6))
     def _tt(artist, title):
@@ -510,7 +481,7 @@ def test_mine_candidates_hop2_discovers_deeper_artists():
     assert len(mined["candidates"]) == 4
 
 
-def test_mine_candidates_hop2_failure_does_not_kill_mine():
+def test_mine_candidates_hop2_failure_does_not_kill_mine(tmpdb):
     sim_resp = MagicMock(status_code=200)
     sim_resp.json.return_value = _similar_payload(("Tame Impala", 0.9))
     err_resp = MagicMock(status_code=500)
@@ -541,7 +512,7 @@ def _ok_resp(payload):
     return r
 
 
-def test_mine_candidates_skips_seed_whose_similar_call_fails():
+def test_mine_candidates_skips_seed_whose_similar_call_fails(tmpdb):
     mock = MagicMock(side_effect=[
         _err_resp(),  # Arctic Monkeys hop1 -> 503, skipped
         _ok_resp(_similar_payload(("Pond", 0.8))),
@@ -557,7 +528,7 @@ def test_mine_candidates_skips_seed_whose_similar_call_fails():
     assert mined["candidates"][0]["via"] == "Tame Impala"
 
 
-def test_mine_candidates_skips_artist_whose_tracks_call_fails():
+def test_mine_candidates_skips_artist_whose_tracks_call_fails(tmpdb):
     mock = MagicMock(side_effect=[
         _ok_resp(_similar_payload(("Tame Impala", 0.9), ("MGMT", 0.7))),
         _err_resp(),  # Tame Impala top tracks -> 503, skipped
@@ -572,7 +543,7 @@ def test_mine_candidates_skips_artist_whose_tracks_call_fails():
     assert [c["title"] for c in mined["candidates"]] == ["Kids"]
 
 
-def test_mine_candidates_raises_when_everything_fails():
+def test_mine_candidates_raises_when_everything_fails(tmpdb):
     import pytest as _pytest
     mock = MagicMock(side_effect=[_err_resp()])
     with patch("lastfm.requests.get", mock), \
@@ -623,7 +594,7 @@ def test_blank_default_artwork_keeps_shared_album_art():
     assert all(c["image"] == "https://x/album.png" for c in cands)
 
 
-def test_prefer_itunes_artwork_replaces_lastfm():
+def test_prefer_itunes_artwork_replaces_lastfm(tmpdb):
     import artwork as artwork_mod
     cands = [{"title": "Borderline", "artist": "Tame Impala",
               "image": "http://img/xl.png"}]
@@ -633,7 +604,7 @@ def test_prefer_itunes_artwork_replaces_lastfm():
     assert cands[0]["image"] == "https://itunes/b.jpg"
 
 
-def test_prefer_itunes_artwork_keeps_lastfm_on_miss():
+def test_prefer_itunes_artwork_keeps_lastfm_on_miss(tmpdb):
     cands = [{"title": "X", "artist": "Y", "image": "http://img/xl.png"}]
     # autouse fixture stubs fetch_itunes_artwork -> "" (a miss)
     lastfm._prefer_itunes_artwork(cands, max_workers=1)
@@ -663,7 +634,7 @@ def test_get_track_album_art_empty_without_album():
         assert lastfm.get_track_album_art("k", "X", "Y") == ""
 
 
-def test_resolve_album_art_fills_only_blanks():
+def test_resolve_album_art_fills_only_blanks(tmpdb):
     cands = [{"title": "A", "artist": "Art1", "image": ""},
              {"title": "B", "artist": "Art2", "image": "http://img/keep.png"}]
     with patch.object(lastfm, "get_track_album_art",
@@ -675,10 +646,54 @@ def test_resolve_album_art_fills_only_blanks():
     mock_art.assert_called_once_with("k", "A", "Art1")
 
 
-def test_resolve_album_art_swallows_lastfm_errors():
+def test_resolve_album_art_swallows_lastfm_errors(tmpdb):
     cands = [{"title": "A", "artist": "Art1", "image": ""}]
     with patch.object(lastfm, "get_track_album_art",
                       side_effect=lastfm.LastfmError("boom")), \
          patch("lastfm.time.sleep"):
         lastfm._resolve_album_art("k", cands)  # must not raise
     assert cands[0]["image"] == ""
+
+
+def test_similar_artists_cache_hit_skips_http(tmpdb):
+    payload = _similar_payload(("Tame Impala", 0.9))
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch("lastfm.requests.get", return_value=resp) as mock_get:
+        first = lastfm.get_similar_artists("k", "Arctic Monkeys")
+        assert mock_get.call_count == 1
+        second = lastfm.get_similar_artists("k", "Arctic Monkeys")
+        assert mock_get.call_count == 1  # served from DB cache
+    assert first == second
+
+
+def test_top_tracks_cache_expires_after_ttl(tmpdb, monkeypatch):
+    import time as _time
+    real_now = _time.time()
+    payload = _toptracks_payload("Tame Impala", ("Borderline", 900000, 1))
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch("lastfm.requests.get", return_value=resp) as mock_get:
+        lastfm.get_artist_top_tracks("k", "Tame Impala")
+        assert mock_get.call_count == 1
+        # Fast-forward 25h past the 24h TTL.
+        monkeypatch.setattr("db.time.time", lambda: real_now + 25 * 3600)
+        lastfm.get_artist_top_tracks("k", "Tame Impala")
+        assert mock_get.call_count == 2  # stale -> refetched
+
+
+def test_artwork_cache_hit_skips_itunes(tmpdb):
+    db.set_artwork("Song", "Artist", "https://img/x.jpg")
+    cands = [{"title": "Song", "artist": "Artist", "image": ""}]
+    with patch("artwork.fetch_itunes_artwork",
+               side_effect=AssertionError("should not call")):
+        lastfm._prefer_itunes_artwork(cands)
+    assert cands[0]["image"] == "https://img/x.jpg"
+
+
+def test_artwork_cache_stores_itunes_hit(tmpdb):
+    cands = [{"title": "Song", "artist": "Artist", "image": ""}]
+    with patch("artwork.fetch_itunes_artwork",
+               return_value="https://img/y.jpg"):
+        lastfm._prefer_itunes_artwork(cands)
+    assert db.get_artwork("Song", "Artist") == "https://img/y.jpg"

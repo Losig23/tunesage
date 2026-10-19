@@ -39,7 +39,7 @@ def test_fetch_itunes_artwork_empty_on_http_error():
         assert artwork.fetch_itunes_artwork("X", "Y") == ""
 
 
-def test_mine_candidates_falls_back_to_itunes_art():
+def test_mine_candidates_falls_back_to_itunes_art(tmpdb):
     import lastfm
     similar = {"similarartists": {"artist": [{"name": "MGMT", "match": "0.7"}]}}
     tracks = {"toptracks": {"track": [

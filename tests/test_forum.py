@@ -68,7 +68,6 @@ def test_never_raises_on_empty_seeds():
 
 # ---- end-to-end wiring: /api/recommendations with live mining ---------------
 
-from test_lastfm import tmpdb, app_client  # noqa: F401  (reuse fixtures)
 import db as db_module
 from unittest.mock import MagicMock
 
@@ -252,3 +251,28 @@ def test_voted_songs_excluded_from_recommendations(app_client, monkeypatch):
 def test_voted_keys_roundtrip(tmpdb):
     db_module.record_feedback("  Borderline ", "TAME IMPALA", liked=False)
     assert db_module.voted_keys() == {("borderline", "tame impala")}
+
+
+def test_refresh_progress_endpoint_tracks_job(app_client):
+    c = app_client.get("/api/refresh/progress?job_id=nope").get_json()
+    assert c["frac"] == 0.0
+    # Simulate a job reporting progress via the app module's store.
+    import app as app_module
+    app_module._refresh_progress("job123", "Mining…", 0.42)
+    c = app_client.get("/api/refresh/progress?job_id=job123").get_json()
+    assert c["stage"] == "Mining…"
+    assert c["frac"] == 0.42
+
+
+def test_mine_candidates_reports_progress(tmpdb):
+    import lastfm as lastfm_module
+    seen = []
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"), \
+         patch("artwork.fetch_itunes_artwork", return_value=""):
+        lastfm_module.mine_candidates("k", ["Arctic Monkeys"],
+                                      progress_cb=lambda s, f: seen.append((s, f)))
+    assert seen, "expected progress callbacks"
+    fracs = [f for _, f in seen]
+    assert fracs == sorted(fracs), "progress should be monotonic"
+    assert fracs[-1] >= 0.78

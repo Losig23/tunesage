@@ -19,7 +19,8 @@ from __future__ import annotations
 import lastfm as lastfm_client
 
 
-def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
+def mine_recommendations(seed_songs: list[dict], api_key: str = "",
+                         progress_cb=None) -> dict:
     """Mine candidate songs similar to the user's top seeds.
 
     Returns {"candidates": [...], "threads": [...],
@@ -28,6 +29,7 @@ def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
     provenance entries (Last.fm similar-artist pages). Never raises: any
     failure anywhere -> built-in fallback dataset, with the cause captured
     in "error" so the UI can say *why* instead of just "unreachable".
+    progress_cb(stage, frac) is called with 0-1 progress for the UI.
     """
     if api_key:
         try:
@@ -36,7 +38,8 @@ def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
                 a = (s.get("artist") or "").strip()
                 if a and a not in artists:
                     artists.append(a)
-            mined = lastfm_client.mine_candidates(api_key, artists)
+            mined = lastfm_client.mine_candidates(api_key, artists,
+                                                  progress_cb=progress_cb)
             threads = [{"title": s["title"], "subreddit": "",
                         "url": s["url"]} for s in mined["sources"]]
             return {"candidates": mined["candidates"],
@@ -46,6 +49,8 @@ def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
             error = f"{type(e).__name__}: {e}"
     else:
         error = "LASTFM_API_KEY is not set"
+    if progress_cb:
+        progress_cb("Using offline sample data", 1.0)
     return {"candidates": [dict(c) for c in FALLBACK_CANDIDATES],
             "threads": [{"title": "(fallback sample dataset — "
                                  "live mining unreachable)",

@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import threading
+import time
 
 from flask import Flask, jsonify, request, send_from_directory
 from dotenv import load_dotenv
@@ -22,6 +24,21 @@ import lastfm as lastfm_client
 import recommender as engine
 
 log = logging.getLogger(__name__)
+
+# Refresh progress jobs: job_id -> {"stage": str, "frac": float,
+# "updated": ts}. Written by the mining thread, polled by the UI.
+_refresh_jobs: dict[str, dict] = {}
+_refresh_lock = threading.Lock()
+_JOB_TTL = 300  # seconds; stale jobs are dropped on read
+
+
+def _refresh_progress(job_id: str, stage: str, frac: float) -> None:
+    if not job_id:
+        return
+    with _refresh_lock:
+        _refresh_jobs[job_id] = {"stage": stage,
+                                 "frac": max(0.0, min(1.0, frac)),
+                                 "updated": time.time()}
 
 
 def _secret_key() -> str:
@@ -68,6 +85,9 @@ def create_app() -> Flask:
     # ---- recommendations ----------------------------------------------
     @app.get("/api/recommendations")
     def recommendations():
+        job_id = request.args.get("job_id", "")
+        progress_cb = (lambda stage, frac:
+                       _refresh_progress(job_id, stage, frac)) if job_id else None
         try:
             limit = max(1, min(50, int(request.args.get("limit", 10))))
         except ValueError:
@@ -89,7 +109,8 @@ def create_app() -> Flask:
                             "message": "Log some listens first!"})
 
         mined = forum_miner.mine_recommendations(
-            seeds, api_key=_lastfm_config()[0])
+            seeds, api_key=_lastfm_config()[0],
+            progress_cb=progress_cb)
 
         # Deduplicate: never recommend anything already in the listening
         # history or already judged (a refresh shows new songs).
@@ -115,6 +136,8 @@ def create_app() -> Flask:
         tempo_available = False
         tempo_error = None
         if bpm_key:
+            if progress_cb:
+                progress_cb("Analyzing tempo…", 0.84)
             try:
                 bpm_client.fill_tempos(bpm_key, ranked[:40])
             except bpm_client.BpmError as e:
@@ -127,6 +150,9 @@ def create_app() -> Flask:
                                "tracks (key may be inactive).")
         else:
             tempo_error = "GETSONGBPM_API_KEY is not set."
+
+        if progress_cb:
+            progress_cb("Ranking your mix…", 0.94)
 
         streams = {k: v[:limit]
                    for k, v in engine.split_streams(ranked).items()}
@@ -142,7 +168,27 @@ def create_app() -> Flask:
                    "v": RECS_CACHE_VERSION,
                    "cached": False}
         db.save_recommendations(payload)
+        if progress_cb:
+            progress_cb("Done", 1.0)
         return jsonify(payload)
+
+    @app.get("/api/refresh/progress")
+    def refresh_progress():
+        """Current stage of an in-flight refresh (polled by the UI)."""
+        job_id = request.args.get("job_id", "")
+        now = time.time()
+        with _refresh_lock:
+            job = _refresh_jobs.get(job_id)
+            if job and now - job["updated"] > _JOB_TTL:
+                del _refresh_jobs[job_id]
+                job = None
+            # Opportunistic cleanup of other stale jobs.
+            for jid in [j for j, j2 in _refresh_jobs.items()
+                        if now - j2["updated"] > _JOB_TTL]:
+                del _refresh_jobs[jid]
+        if not job:
+            return jsonify({"stage": "Starting…", "frac": 0.0})
+        return jsonify({"stage": job["stage"], "frac": job["frac"]})
 
     # ---- feedback (online learning) ------------------------------------
     @app.post("/api/feedback")

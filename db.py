@@ -69,6 +69,25 @@ CREATE TABLE IF NOT EXISTS bpm_cache (
     fetched_at INTEGER NOT NULL,
     PRIMARY KEY (title, artist)
 );
+-- Last.fm API responses: similar artists and top tracks change slowly, so
+-- mining reuses them instead of re-fetching every refresh. TTLs are enforced
+-- by the caller (get_lastfm_cached takes max_age_seconds).
+CREATE TABLE IF NOT EXISTS lastfm_cache (
+    method TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    response TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (method, cache_key)
+);
+-- Resolved artwork URLs (iTunes + Last.fm album art): art never changes for
+-- a given track, so each unique track is resolved once, like tempo.
+CREATE TABLE IF NOT EXISTS art_cache (
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    url TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (title, artist)
+);
 """
 
 
@@ -350,6 +369,72 @@ def set_tempo(title: str, artist: str, tempo: float,
             "INSERT OR REPLACE INTO bpm_cache (title, artist, tempo, fetched_at)"
             " VALUES (?, ?, ?, ?)",
             (title.strip(), artist.strip(), float(tempo), int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---- Last.fm response cache ----------------------------------------------------
+
+def get_lastfm_cached(method: str, cache_key: str, max_age_seconds: int,
+                      path: Path | str = DB_PATH):
+    """Cached Last.fm API response (parsed JSON), or None if missing/stale."""
+    conn = get_conn(path)
+    try:
+        row = conn.execute(
+            "SELECT response, fetched_at FROM lastfm_cache"
+            " WHERE method = ? AND cache_key = ?",
+            (method, cache_key)).fetchone()
+        if not row:
+            return None
+        if int(time.time()) - int(row["fetched_at"]) > max_age_seconds:
+            return None
+        return json.loads(row["response"])
+    finally:
+        conn.close()
+
+
+def set_lastfm_cached(method: str, cache_key: str, response,
+                      path: Path | str = DB_PATH) -> None:
+    """Cache a Last.fm API response (stored as JSON)."""
+    conn = get_conn(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO lastfm_cache"
+            " (method, cache_key, response, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (method, cache_key, json.dumps(response), int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---- artwork cache -------------------------------------------------------------
+
+def get_artwork(title: str, artist: str,
+                path: Path | str = DB_PATH) -> str | None:
+    """Cached artwork URL for a track, or None if never resolved."""
+    conn = get_conn(path)
+    try:
+        row = conn.execute(
+            "SELECT url FROM art_cache WHERE title = ? AND artist = ?",
+            (title.strip(), artist.strip())).fetchone()
+        return row["url"] if row else None
+    finally:
+        conn.close()
+
+
+def set_artwork(title: str, artist: str, url: str,
+                path: Path | str = DB_PATH) -> None:
+    """Cache a track's artwork URL (INSERT OR REPLACE — art never changes)."""
+    conn = get_conn(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO art_cache (title, artist, url, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (title.strip(), artist.strip(), url, int(time.time())),
         )
         conn.commit()
     finally:

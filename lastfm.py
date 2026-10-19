@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
 import artwork
+import db
 
 # Last.fm's generic "no artwork" placeholder (white star box). Filtered out
 # in _largest_image so the UI renders its own placeholder instead.
@@ -210,14 +211,20 @@ def get_similar_artists(api_key: str, artist: str,
                         limit: int = 5) -> list[dict]:
     """Artists Last.fm considers similar: [{name, match}].
 
-    `match` is a 0–1 similarity score. Raises LastfmError on any failure.
+    `match` is a 0–1 similarity score. Results are cached 7 days — similar
+    artists change slowly. Raises LastfmError on any failure.
     """
     if not api_key or not artist:
         raise LastfmError("API key and artist are required.")
+    limit = max(1, min(100, limit))
+    key = artist.strip().lower()
+    cached = db.get_lastfm_cached("artist.getSimilar", key, 7 * 24 * 3600)
+    if cached is not None:
+        return cached
     body = _request(api_key, {
         "method": "artist.getSimilar",
         "artist": artist,
-        "limit": max(1, min(100, limit)),
+        "limit": limit,
     })
     items = _as_list((body.get("similarartists") or {}).get("artist"))
     out = []
@@ -227,6 +234,7 @@ def get_similar_artists(api_key: str, artist: str,
             continue
         out.append({"name": name,
                     "match": _to_float(item.get("match"))})
+    db.set_lastfm_cached("artist.getSimilar", key, out)
     return out
 
 
@@ -234,14 +242,20 @@ def get_artist_top_tracks(api_key: str, artist: str,
                           limit: int = 5) -> list[dict]:
     """An artist's most-played tracks: [{title, artist, listeners, playcount}].
 
-    Raises LastfmError on any failure.
+    Results are cached 24 hours — top tracks shift slowly. Raises LastfmError
+    on any failure.
     """
     if not api_key or not artist:
         raise LastfmError("API key and artist are required.")
+    limit = max(1, min(50, limit))
+    key = artist.strip().lower()
+    cached = db.get_lastfm_cached("artist.getTopTracks", key, 24 * 3600)
+    if cached is not None:
+        return cached
     body = _request(api_key, {
         "method": "artist.getTopTracks",
         "artist": artist,
-        "limit": max(1, min(50, limit)),
+        "limit": limit,
     })
     items = _as_list((body.get("toptracks") or {}).get("track"))
     out = []
@@ -261,6 +275,7 @@ def get_artist_top_tracks(api_key: str, artist: str,
             "playcount": _to_int(item.get("playcount")),
             "image": _largest_image(item),
         })
+    db.set_lastfm_cached("artist.getTopTracks", key, out)
     return out
 
 
@@ -294,7 +309,8 @@ def _mentions_from_listeners(listeners: int) -> int:
 def mine_candidates(api_key: str, seed_artists: list[str],
                     max_artists: int = 4, similar_per_artist: int = 5,
                     tracks_per_artist: int = 2, hop2_seeds: int = 2,
-                    hop2_similar: int = 3, sleep: float = 0.25) -> dict:
+                    hop2_similar: int = 3, sleep: float = 0.25,
+                    progress_cb=None) -> dict:
     """Build recommendation candidates from Last.fm similarity data.
 
     Two-hop traversal: for each seed artist, take similar artists (hop 1),
@@ -308,6 +324,9 @@ def mine_candidates(api_key: str, seed_artists: list[str],
     (title, artist, genre, tags, mentions, listeners, via, image,
     sources, snippets).
 
+    progress_cb(stage, frac) reports 0-0.8 progress for the UI (mining +
+    artwork; tempo/ranking are the caller's stages).
+
     Raises LastfmError (or RuntimeError when nothing comes back) — the
     caller falls back to the built-in sample dataset.
     """
@@ -319,12 +338,18 @@ def mine_candidates(api_key: str, seed_artists: list[str],
         raise RuntimeError("no seed artists to mine from")
     seed_set = {a.lower() for a in artists}
 
+    def _progress(stage: str, frac: float) -> None:
+        if progress_cb:
+            progress_cb(stage, frac)
+
     # Hop 1 + hop 2 similar-artist expansion. Every network call is
     # individually guarded: one flaky artist (Last.fm has been serving
     # intermittent 503s) must degrade the mine, never kill it.
     similar: dict[str, dict] = {}  # name -> {"match", "via"}
     sources: list[dict] = []
-    for seed in artists:
+    for i, seed in enumerate(artists):
+        _progress(f"Finding artists like {seed}…",
+                  0.05 + 0.25 * i / max(1, len(artists)))
         try:
             hop1 = get_similar_artists(api_key, seed, limit=similar_per_artist)
         except LastfmError:
@@ -360,7 +385,10 @@ def mine_candidates(api_key: str, seed_artists: list[str],
         })
 
     aggregate: dict[tuple[str, str], dict] = {}
-    for sim_name, info in similar.items():
+    sim_names = list(similar.items())
+    for j, (sim_name, info) in enumerate(sim_names):
+        _progress(f"Getting top tracks of {sim_name}…",
+                  0.32 + 0.23 * j / max(1, len(sim_names)))
         match = info["match"]
         try:
             tracks = get_artist_top_tracks(api_key, sim_name,
@@ -402,8 +430,11 @@ def mine_candidates(api_key: str, seed_artists: list[str],
     candidates = sorted(aggregate.values(),
                         key=lambda c: c["mentions"], reverse=True)
     _blank_default_artwork(candidates)
+    _progress("Fetching artwork…", 0.58)
     _prefer_itunes_artwork(candidates)
+    _progress("Filling artwork gaps…", 0.68)
     _resolve_album_art(api_key, candidates)
+    _progress("Artwork done", 0.78)
     if not candidates:
         raise RuntimeError("Last.fm mining returned no candidates")
     return {"candidates": candidates, "sources": sources}
@@ -414,13 +445,25 @@ def _prefer_itunes_artwork(candidates: list[dict], max_workers: int = 8) -> None
 
     Last.fm's generic placeholder can't be detected reliably, so iTunes —
     real artwork for virtually all commercial tracks — wins whenever it
-    returns an artist-matching result. Runs concurrently (~40 lookups in a
-    few seconds). Best-effort: misses keep whatever art is already there.
+    returns an artist-matching result. Resolved URLs are cached persistently
+    (art never changes). Runs concurrently (~40 lookups in a few seconds).
+    Best-effort: misses keep whatever art is already there.
     """
     def _resolve(c: dict) -> None:
+        try:
+            cached = db.get_artwork(c["title"], c["artist"])
+        except Exception:
+            cached = None
+        if cached:
+            c["image"] = cached
+            return
         art = artwork.fetch_itunes_artwork(c["title"], c["artist"])
         if art:
             c["image"] = art
+            try:
+                db.set_artwork(c["title"], c["artist"], art)
+            except Exception:
+                pass
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         list(ex.map(_resolve, candidates))
@@ -431,10 +474,18 @@ def _resolve_album_art(api_key: str, candidates: list[dict]) -> None:
 
     Candidates still imageless after the iTunes pass get one paced
     track.getInfo lookup each — the same album-level artwork scrobbles
-    carry. Best-effort: failures keep the placeholder.
+    carry. Resolved URLs are cached persistently. Best-effort: failures
+    keep the placeholder.
     """
     for c in candidates:
         if c.get("image"):
+            continue
+        try:
+            cached = db.get_artwork(c["title"], c["artist"])
+        except Exception:
+            cached = None
+        if cached:
+            c["image"] = cached
             continue
         try:
             art = get_track_album_art(api_key, c["title"], c["artist"])
@@ -442,6 +493,10 @@ def _resolve_album_art(api_key: str, candidates: list[dict]) -> None:
             art = ""
         if art:
             c["image"] = art
+            try:
+                db.set_artwork(c["title"], c["artist"], art)
+            except Exception:
+                pass
         time.sleep(0.2)
 
 

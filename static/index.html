@@ -65,6 +65,10 @@
   .voted { outline:3px solid #fff; outline-offset:2px; }
   .threads { color:var(--muted); font-size:.8rem; }
   .threads a { color:#b5b5b5; }
+  .refresh-progress { padding:8px 0; }
+  .rp-bar { height:8px; background:var(--row); border-radius:4px; overflow:hidden; }
+  .rp-fill { height:100%; width:0%; background:var(--green); border-radius:4px;
+             transition:width .4s ease; }
   .notice { background:#141414; border:1px solid #2e2e2e; border-radius:8px;
             padding:10px 14px; font-size:.85rem; margin-bottom:12px; }
   .scores { font-size:.75rem; color:var(--muted); }
@@ -263,8 +267,30 @@ function renderStream() {
 }
 
 async function loadRecs(refresh = false) {
-  $('recs').innerHTML = '<p class="threads">Mining candidates & scoring…</p>';
-  const data = await api(`/api/recommendations?limit=10&refresh=${refresh ? 1 : 0}`);
+  let stopPoll = null;
+  if (refresh) {
+    const jobId = Math.random().toString(36).slice(2);
+    $('recs').innerHTML = `<div class="refresh-progress">
+      <div class="rp-bar"><div class="rp-fill" id="rpFill"></div></div>
+      <p class="threads" id="rpStage">Starting…</p></div>`;
+    stopPoll = setInterval(async () => {
+      try {
+        const p = await api(`/api/refresh/progress?job_id=${jobId}`);
+        $('rpFill').style.width = `${Math.round(p.frac * 100)}%`;
+        $('rpStage').textContent = p.stage;
+      } catch (e) { /* keep polling; the main request reports errors */ }
+    }, 600);
+    var jobParam = `&job_id=${jobId}`;
+  } else {
+    $('recs').innerHTML = '<p class="threads">Loading…</p>';
+    var jobParam = '';
+  }
+  let data;
+  try {
+    data = await api(`/api/recommendations?limit=10&refresh=${refresh ? 1 : 0}${jobParam}`);
+  } finally {
+    if (stopPoll) clearInterval(stopPoll);
+  }
   const srcNote = data.source === 'lastfm'
     ? `Mined live from Last.fm — top tracks of artists similar to yours${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`
     : data.source === 'empty'
