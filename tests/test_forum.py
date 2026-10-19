@@ -219,7 +219,7 @@ def test_tempo_available_only_with_real_data(app_client, monkeypatch):
             "/api/recommendations?limit=5&refresh=1").get_json()
     assert body["tempo_available"] is False
     assert "upbeat" not in body["streams"]
-    assert body["tempo_error"] is None
+    assert "no tempo data" in (body["tempo_error"] or "")
 
 
 def test_tempo_error_surfaced_on_bad_key(app_client, monkeypatch):

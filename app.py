@@ -122,6 +122,9 @@ def create_app() -> Flask:
             except Exception:
                 pass  # enrichment must never break recommendations
             tempo_available = any(c.get("tempo") for c in ranked)
+            if not tempo_available and not tempo_error:
+                tempo_error = ("GetSongBPM returned no tempo data for these "
+                               "tracks (key may be inactive).")
         else:
             tempo_error = "GETSONGBPM_API_KEY is not set."
 
