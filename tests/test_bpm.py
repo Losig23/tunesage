@@ -141,8 +141,28 @@ def test_get_tempo_uses_getsong_co_endpoint():
 
 
 def test_get_tempo_uses_both_type_with_artist_refinement():
-    with patch("bpm.requests.get", return_value=_resp([])) as mock_get:
-        bpm.get_tempo("k", "Blinding Lights", "The Weeknd")
+    hit = _resp([{"tempo": "172", "artist": {"name": "The Weeknd"}}])
+    with patch("bpm.requests.get", return_value=hit) as mock_get:
+        assert bpm.get_tempo("k", "Blinding Lights", "The Weeknd") == 172.0
     params = mock_get.call_args[1]["params"]
     assert params["type"] == "both"
     assert params["lookup"] == "song:Blinding Lights artist:The Weeknd"
+
+
+def test_get_tempo_falls_back_to_plain_title_search():
+    empty = MagicMock(status_code=200)
+    empty.json.return_value = {"search": []}
+    hit = _resp([{"tempo": "128", "artist": {"name": "X"}}])
+    with patch("bpm.requests.get", side_effect=[empty, hit]) as mock_get:
+        assert bpm.get_tempo("k", "X", "Y") == 128.0
+    calls = mock_get.call_args_list
+    assert calls[0][1]["params"]["type"] == "both"
+    assert calls[1][1]["params"]["type"] == "song"
+    assert calls[1][1]["params"]["lookup"] == "X"
+
+
+def test_get_tempo_treats_non_list_search_as_miss():
+    r = MagicMock(status_code=200)
+    r.json.return_value = {"search": "no results"}
+    with patch("bpm.requests.get", return_value=r):
+        assert bpm.get_tempo("k", "X", "Y") is None

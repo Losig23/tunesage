@@ -43,19 +43,33 @@ def _parse_tempo(value) -> float | None:
 def get_tempo(api_key: str, title: str, artist: str) -> float | None:
     """Look up a track's tempo. Returns BPM or None when unknown.
 
+    Tries the precise artist-refined query first, then falls back to a plain
+    title search — the API can be finicky with feat./special characters.
     Raises BpmError on transport/API failures (unknown track -> None).
     """
     if not api_key or not title:
         raise BpmError("API key and title are required.")
+    title, artist = title.strip(), (artist or "").strip()
     # Docs: type=song takes a plain title; the song:/artist: prefixes are
-    # only for type=both — which is what we want (refine by artist).
-    lookup = f"song:{title.strip()}"
-    if artist and artist.strip():
-        lookup += f" artist:{artist.strip()}"
+    # only for type=both.
+    strategies = []
+    if artist:
+        strategies.append(("both", f"song:{title} artist:{artist}"))
+    strategies.append(("song", title))
+    for type_, lookup in strategies:
+        tempo = _search_tempo(api_key, type_, lookup, artist)
+        if tempo is not None:
+            return tempo
+    return None
+
+
+def _search_tempo(api_key: str, type_: str, lookup: str,
+                  artist: str) -> float | None:
+    """One GetSongBPM search; BPM or None. Raises BpmError on failures."""
     try:
         r = requests.get(
             API_URL,
-            params={"api_key": api_key, "type": "both", "lookup": lookup},
+            params={"api_key": api_key, "type": type_, "lookup": lookup},
             timeout=TIMEOUT,
         )
     except requests.RequestException as e:
@@ -73,10 +87,14 @@ def get_tempo(api_key: str, title: str, artist: str) -> float | None:
         # e.g. {"error": "Invalid API Key, or inactive."} — a key problem,
         # not an unknown track. Must raise, not return None.
         raise BpmError(f"GetSongBPM: {body['error']}")
-    results = body.get("search") or []
+    results = body.get("search")
+    if not isinstance(results, list):
+        # API sometimes returns a non-list (e.g. an error string) here;
+        # treat as "unknown track", not a crash.
+        return None
     if not results:
         return None  # unknown track — not an error
-    want = (artist or "").strip().lower()
+    want = artist.strip().lower()
 
     def _artist_of(item: dict) -> str:
         a = item.get("artist")
@@ -85,11 +103,15 @@ def get_tempo(api_key: str, title: str, artist: str) -> float | None:
         return str(a or "").strip().lower()
 
     for item in results:
+        if not isinstance(item, dict):
+            continue
         if want and want in _artist_of(item):
             if (t := _parse_tempo(item.get("tempo"))) is not None:
                 return t
     # no artist match: fall back to the top hit's tempo, if it has one
     for item in results:
+        if not isinstance(item, dict):
+            continue
         if (t := _parse_tempo(item.get("tempo"))) is not None:
             return t
     return None
@@ -122,6 +144,8 @@ def fill_tempos(api_key: str, candidates: list[dict],
             if "api key" in str(e).lower():
                 raise  # key-level problem: abort so the caller surfaces it
             continue  # one bad track must not break the batch
+        except Exception:
+            continue  # unexpected shape/bug per track: skip, don't kill all
         if tempo is not None:
             db.set_tempo(title, artist, tempo)
             c["tempo"] = tempo
