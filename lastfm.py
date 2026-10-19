@@ -290,11 +290,16 @@ def mine_candidates(api_key: str, seed_artists: list[str],
         raise RuntimeError("no seed artists to mine from")
     seed_set = {a.lower() for a in artists}
 
-    # Hop 1 + hop 2 similar-artist expansion.
+    # Hop 1 + hop 2 similar-artist expansion. Every network call is
+    # individually guarded: one flaky artist (Last.fm has been serving
+    # intermittent 503s) must degrade the mine, never kill it.
     similar: dict[str, dict] = {}  # name -> {"match", "via"}
     sources: list[dict] = []
     for seed in artists:
-        hop1 = get_similar_artists(api_key, seed, limit=similar_per_artist)
+        try:
+            hop1 = get_similar_artists(api_key, seed, limit=similar_per_artist)
+        except LastfmError:
+            continue  # one bad seed must not kill the whole mine
         time.sleep(sleep)
         for sim in hop1:
             name = sim["name"]
@@ -328,8 +333,11 @@ def mine_candidates(api_key: str, seed_artists: list[str],
     aggregate: dict[tuple[str, str], dict] = {}
     for sim_name, info in similar.items():
         match = info["match"]
-        tracks = get_artist_top_tracks(api_key, sim_name,
-                                       limit=tracks_per_artist)
+        try:
+            tracks = get_artist_top_tracks(api_key, sim_name,
+                                           limit=tracks_per_artist)
+        except LastfmError:
+            continue  # skip the flaky artist, keep the rest
         time.sleep(sleep)
         for t in tracks:
             key = (t["title"].lower(), t["artist"].lower())

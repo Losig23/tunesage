@@ -512,3 +512,58 @@ def test_mine_candidates_hop2_failure_does_not_kill_mine():
             hop2_seeds=1, hop2_similar=1)
     # hop-1 results survive the failed hop-2 call
     assert [c["title"] for c in mined["candidates"]] == ["Borderline"]
+
+
+def _err_resp():
+    r = MagicMock(status_code=503)
+    r.text = "upstream connect error"
+    return r
+
+
+def _ok_resp(payload):
+    r = MagicMock(status_code=200)
+    r.json.return_value = payload
+    return r
+
+
+def test_mine_candidates_skips_seed_whose_similar_call_fails():
+    mock = MagicMock(side_effect=[
+        _err_resp(),  # Arctic Monkeys hop1 -> 503, skipped
+        _ok_resp(_similar_payload(("Pond", 0.8))),
+        _ok_resp(_toptracks_payload("Pond", ("Paint Me Silver", 50000, 1))),
+    ])
+    with patch("lastfm.requests.get", mock), \
+         patch("lastfm.time.sleep"):
+        mined = lastfm.mine_candidates(
+            "key123", ["Arctic Monkeys", "Tame Impala"],
+            max_artists=2, similar_per_artist=1, tracks_per_artist=1,
+            hop2_seeds=0)
+    assert [c["title"] for c in mined["candidates"]] == ["Paint Me Silver"]
+    assert mined["candidates"][0]["via"] == "Tame Impala"
+
+
+def test_mine_candidates_skips_artist_whose_tracks_call_fails():
+    mock = MagicMock(side_effect=[
+        _ok_resp(_similar_payload(("Tame Impala", 0.9), ("MGMT", 0.7))),
+        _err_resp(),  # Tame Impala top tracks -> 503, skipped
+        _ok_resp(_toptracks_payload("MGMT", ("Kids", 60000, 1))),
+    ])
+    with patch("lastfm.requests.get", mock), \
+         patch("lastfm.time.sleep"):
+        mined = lastfm.mine_candidates(
+            "key123", ["Arctic Monkeys"],
+            max_artists=1, similar_per_artist=2, tracks_per_artist=1,
+            hop2_seeds=0)
+    assert [c["title"] for c in mined["candidates"]] == ["Kids"]
+
+
+def test_mine_candidates_raises_when_everything_fails():
+    import pytest as _pytest
+    mock = MagicMock(side_effect=[_err_resp()])
+    with patch("lastfm.requests.get", mock), \
+         patch("lastfm.time.sleep"):
+        with _pytest.raises(RuntimeError, match="no candidates"):
+            lastfm.mine_candidates(
+                "key123", ["Arctic Monkeys"],
+                max_artists=1, similar_per_artist=1, tracks_per_artist=1,
+                hop2_seeds=0)
