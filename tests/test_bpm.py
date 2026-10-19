@@ -113,3 +113,28 @@ def test_fill_tempos_no_key_does_nothing(tmpdb):
     with patch("bpm.requests.get") as mock_get:
         assert bpm.fill_tempos("", cands) == 0
     mock_get.assert_not_called()
+
+
+def test_get_tempo_raises_on_api_error_body():
+    r = MagicMock(status_code=200)
+    r.json.return_value = {"error": "Invalid API Key, or inactive."}
+    with patch("bpm.requests.get", return_value=r):
+        with pytest.raises(bpm.BpmError, match="Invalid API Key"):
+            bpm.get_tempo("badkey", "X", "Y")
+
+
+def test_fill_tempos_reraises_key_errors(tmpdb):
+    r = MagicMock(status_code=200)
+    r.json.return_value = {"error": "Invalid API Key, or inactive."}
+    cands = [{"title": "X", "artist": "Y"}]
+    with patch("bpm.requests.get", return_value=r), \
+         patch("bpm.time.sleep"):
+        with pytest.raises(bpm.BpmError, match="Invalid API Key"):
+            bpm.fill_tempos("badkey", cands)
+
+
+def test_get_tempo_uses_getsong_co_endpoint():
+    with patch("bpm.requests.get", return_value=_resp([])) as mock_get:
+        bpm.get_tempo("k", "X", "Y")
+    url = mock_get.call_args[0][0]
+    assert url == "https://api.getsong.co/search/"

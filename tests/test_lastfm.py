@@ -14,6 +14,15 @@ import db
 import lastfm
 
 
+@pytest.fixture(autouse=True)
+def _stub_itunes_artwork(monkeypatch):
+    """mine_candidates falls back to iTunes when Last.fm art is missing;
+    stub it so mining unit tests never touch the network."""
+    import artwork
+    monkeypatch.setattr(artwork, "fetch_itunes_artwork",
+                        lambda title, artist: "")
+
+
 @pytest.fixture
 def tmpdb(tmp_path, monkeypatch):
     """Temp DB + rebind db helpers used by the routes to use it."""
@@ -29,7 +38,8 @@ def tmpdb(tmp_path, monkeypatch):
 
     for name in ("log_listen", "top_songs", "already_imported",
                  "record_import", "last_import_at",
-                 "get_cached_recommendations", "save_recommendations"):
+                 "get_cached_recommendations", "save_recommendations",
+                 "all_song_keys"):
         monkeypatch.setattr(db, name, _bind(getattr(db, name)))
     return p
 
@@ -567,3 +577,17 @@ def test_mine_candidates_raises_when_everything_fails():
                 "key123", ["Arctic Monkeys"],
                 max_artists=1, similar_per_artist=1, tracks_per_artist=1,
                 hop2_seeds=0)
+
+
+def test_largest_image_skips_lastfm_default_placeholder():
+    item = {"image": [
+        {"#text": "https://lastfm.freetls.fastly.net/i/u/300x300/"
+                  "2a96cbd8b46e442fc41c2b86b821b4ce.png", "size": "extralarge"},
+        {"#text": "https://example.com/real.png", "size": "small"},
+    ]}
+    # default placeholder ignored even though it's the biggest entry
+    assert lastfm._largest_image(item) == "https://example.com/real.png"
+    only_default = {"image": [
+        {"#text": "https://lastfm.freetls.fastly.net/i/u/300x300/"
+                  "2a96cbd8b46e442fc41c2b86b821b4ce.png", "size": "large"}]}
+    assert lastfm._largest_image(only_default) == ""

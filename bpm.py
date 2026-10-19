@@ -24,7 +24,7 @@ import requests
 
 import db
 
-API_URL = "https://api.getsongbpm.com/search/"
+API_URL = "https://api.getsong.co/search/"
 TIMEOUT = 10  # seconds
 
 
@@ -65,6 +65,10 @@ def get_tempo(api_key: str, title: str, artist: str) -> float | None:
         body = r.json()
     except ValueError as e:
         raise BpmError("GetSongBPM returned non-JSON response.") from e
+    if isinstance(body, dict) and body.get("error"):
+        # e.g. {"error": "Invalid API Key, or inactive."} — a key problem,
+        # not an unknown track. Must raise, not return None.
+        raise BpmError(f"GetSongBPM: {body['error']}")
     results = body.get("search") or []
     if not results:
         return None  # unknown track — not an error
@@ -110,8 +114,10 @@ def fill_tempos(api_key: str, candidates: list[dict],
             tempo = get_tempo(api_key, title, artist)
             lookups += 1
             time.sleep(sleep)
-        except BpmError:
-            continue
+        except BpmError as e:
+            if "api key" in str(e).lower():
+                raise  # key-level problem: abort so the caller surfaces it
+            continue  # one bad track must not break the batch
         if tempo is not None:
             db.set_tempo(title, artist, tempo)
             c["tempo"] = tempo

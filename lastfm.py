@@ -28,6 +28,12 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
+import artwork
+
+# Last.fm's generic "no artwork" placeholder (white star box). Filtered out
+# in _largest_image so the UI renders its own placeholder instead.
+_LASTFM_DEFAULT_ART_HASH = "2a96cbd8b46e442fc41c2b86b821b4ce"
+
 import requests
 
 API_URL = "https://ws.audioscrobbler.com/2.0/"
@@ -52,6 +58,10 @@ def _largest_image(item: dict) -> str:
     Items look like {"image": [{"#text": url, "size": "small"}, ...]} with
     sizes small < medium < large < extralarge. Returns "" when absent —
     callers render a placeholder.
+
+    Last.fm serves a generic white-star placeholder for tracks with no real
+    artwork; its URL always contains _LASTFM_DEFAULT_ART_HASH, so we treat
+    those as missing too (otherwise every obscure track shows a white box).
     """
     images = _as_list(item.get("image"))
     rank = {"small": 0, "medium": 1, "large": 2, "extralarge": 3, "mega": 4}
@@ -60,6 +70,8 @@ def _largest_image(item: dict) -> str:
         if not isinstance(img, dict):
             continue
         url = _text(img.get("#text")).strip()
+        if not url or _LASTFM_DEFAULT_ART_HASH in url:
+            continue
         r = rank.get(str(img.get("size") or "").lower(), -1)
         if url and r >= best_rank:
             best, best_rank = url, r
@@ -364,7 +376,10 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                     "mentions": mentions,
                     "listeners": t["listeners"],
                     "via": info["via"],  # which of your artists led us here
-                    "image": t.get("image", ""),
+                    # Last.fm art, else iTunes fallback, else UI placeholder.
+                    "image": (t.get("image", "")
+                              or artwork.fetch_itunes_artwork(
+                                  t["title"], t["artist"])),
                     "sources": ["https://www.last.fm/music/"
                                 + quote_plus(t["artist"])],
                     "snippets": [snippet],

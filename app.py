@@ -60,7 +60,7 @@ def create_app() -> Flask:
     @app.get("/api/listens/top")
     def top_listens():
         try:
-            limit = max(1, min(50, int(request.args.get("limit", 10))))
+            limit = max(1, min(5000, int(request.args.get("limit", 10))))
         except ValueError:
             limit = 10
         return jsonify({"songs": db.top_songs(limit)})
@@ -91,8 +91,10 @@ def create_app() -> Flask:
         mined = forum_miner.mine_recommendations(
             seeds, api_key=_lastfm_config()[0])
 
-        # Deduplicate: don't recommend songs the user already listens to.
-        known = {(s["title"].lower(), s["artist"].lower()) for s in seeds}
+        # Deduplicate: never recommend anything already in the listening
+        # history (the full library, not just the top seeds used for the
+        # taste profile).
+        known = db.all_song_keys()
         candidates = [c for c in mined["candidates"]
                       if (c["title"].lower(), c["artist"].lower()) not in known]
 
@@ -108,15 +110,19 @@ def create_app() -> Flask:
             c["why"] = engine.explain(c, profile_terms)
 
         # Tempo enrichment (GetSongBPM): best-effort, persistently cached.
-        # Without a key the popularity streams still work; tempo tabs hide.
+        # Tabs appear only when real tempo data came back; a bad/inactive
+        # key is surfaced (tempo_error) instead of failing silently.
         bpm_key = os.environ.get("GETSONGBPM_API_KEY", "").strip()
         tempo_available = False
+        tempo_error = None
         if bpm_key:
             try:
                 bpm_client.fill_tempos(bpm_key, ranked[:40])
-                tempo_available = True
+            except bpm_client.BpmError as e:
+                tempo_error = str(e)
             except Exception:
                 pass  # enrichment must never break recommendations
+            tempo_available = any(c.get("tempo") for c in ranked)
 
         streams = {k: v[:limit]
                    for k, v in engine.split_streams(ranked).items()}
@@ -127,6 +133,7 @@ def create_app() -> Flask:
         payload = {"songs": ranked[:limit], "threads": mined["threads"][:10],
                    "source": mined["source"], "weights": weights,
                    "streams": streams, "tempo_available": tempo_available,
+                   "tempo_error": tempo_error,
                    "mining_error": mined.get("error"),
                    "v": RECS_CACHE_VERSION,
                    "cached": False}

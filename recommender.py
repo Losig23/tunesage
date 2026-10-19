@@ -247,4 +247,11 @@ def top_profile_terms(vectorizer, profile_vector, n: int = 12) -> list[str]:
         return []
     terms = np.array(vectorizer.get_feature_names_out())
     idx = np.argsort(profile_vector)[::-1][:n]
-    return [t for t in terms[idx] if profile_vector[terms.tolist().index(t)] > 0]
+    return [t for t in terms[idx]
+            if profile_vector[terms.tolist().index(t)] > 0
+            and t not in _EXPLAIN_STOPWORDS]
+
+
+# Tokens that carry no taste signal in explanations ("feat." matches every
+# collaboration). Kept out of top_profile_terms only — scoring is untouched.
+_EXPLAIN_STOPWORDS = {"feat", "ft", "featuring", "vs", "prod", "presents"}

@@ -354,3 +354,18 @@ def set_tempo(title: str, artist: str, tempo: float,
         conn.commit()
     finally:
         conn.close()
+
+
+def all_song_keys(path: Path | str = DB_PATH) -> set[tuple[str, str]]:
+    """(title, artist) pairs for every logged song, lowercased/stripped.
+
+    Used to exclude the user's whole listening history from
+    recommendations (not just the top seeds that feed the taste profile).
+    """
+    conn = get_conn(path)
+    try:
+        rows = conn.execute("SELECT title, artist FROM songs").fetchall()
+        return {(str(r["title"]).strip().lower(),
+                 str(r["artist"]).strip().lower()) for r in rows}
+    finally:
+        conn.close()

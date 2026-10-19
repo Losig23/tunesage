@@ -6,7 +6,17 @@ routing: live path when a key is set, graceful fallback otherwise.
 
 from unittest.mock import patch
 
+import pytest
+
 import forum
+
+
+@pytest.fixture(autouse=True)
+def _stub_itunes_artwork(monkeypatch):
+    """Route tests exercise mine_candidates; keep iTunes fallback off-net."""
+    import artwork
+    monkeypatch.setattr(artwork, "fetch_itunes_artwork",
+                        lambda title, artist: "")
 
 
 def _seeds():
@@ -167,3 +177,59 @@ def test_empty_seeds_route_reports_empty_source(app_client):
     body = app_client.get("/api/recommendations?limit=5").get_json()
     assert body["source"] == "empty"
     assert body["songs"] == []
+
+
+def test_recommendations_exclude_entire_history_not_just_top10(
+        app_client, monkeypatch):
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    # 10 songs with 3 plays each fill the top-10; Borderline (1 play) sits
+    # at #11 — the old top-10-only exclusion would still recommend it.
+    for i in range(10):
+        for _ in range(3):
+            db_module.log_listen(f"Song{i}", f"Artist{i}")
+    db_module.log_listen("Borderline", "Tame Impala")
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"):
+        body = app_client.get(
+            "/api/recommendations?limit=10&refresh=1").get_json()
+    titles = [s["title"] for s in body["songs"]]
+    assert "Borderline" not in titles
+
+
+def test_all_song_keys_roundtrip(tmpdb):
+    db_module.log_listen("  Blinding Lights ", "THE WEEKND")
+    assert db_module.all_song_keys() == {("blinding lights", "the weeknd")}
+
+
+def test_tempo_available_only_with_real_data(app_client, monkeypatch):
+    monkeypatch.setenv("GETSONGBPM_API_KEY", "bpmkey")
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    # key is set but lookups find nothing -> tabs stay hidden, no crash
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"), \
+         patch("bpm.requests.get",
+               return_value=MagicMock(status_code=200,
+                                      **{"json.return_value": {"search": []}})), \
+         patch("bpm.time.sleep"):
+        body = app_client.get(
+            "/api/recommendations?limit=5&refresh=1").get_json()
+    assert body["tempo_available"] is False
+    assert "upbeat" not in body["streams"]
+    assert body["tempo_error"] is None
+
+
+def test_tempo_error_surfaced_on_bad_key(app_client, monkeypatch):
+    monkeypatch.setenv("GETSONGBPM_API_KEY", "badkey")
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    bad = MagicMock(status_code=200)
+    bad.json.return_value = {"error": "Invalid API Key, or inactive."}
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"), \
+         patch("bpm.requests.get", return_value=bad), \
+         patch("bpm.time.sleep"):
+        body = app_client.get(
+            "/api/recommendations?limit=5&refresh=1").get_json()
+    assert body["tempo_available"] is False
+    assert "Invalid API Key" in (body["tempo_error"] or "")

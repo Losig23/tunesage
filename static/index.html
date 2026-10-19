@@ -52,7 +52,7 @@
   .bar > div { height:100%; background:#8a8a8a; }
   .why { color:var(--muted); font-size:.85rem; font-style:italic; }
   .votes { display:flex; gap:6px; flex-shrink:0; }
-  .voted { outline:2px solid var(--accent); }
+  .voted { outline:3px solid #fff; outline-offset:2px; }
   .threads { color:var(--muted); font-size:.8rem; }
   .threads a { color:#b5b5b5; }
   .notice { background:#141414; border:1px solid #2e2e2e; border-radius:8px;
@@ -93,7 +93,7 @@
   </section>
 
   <section>
-    <h2>🔥 Your top tracks</h2>
+    <h2>🔥 Your top tracks <button class="ghost small" id="topToggle">Show all</button></h2>
     <div id="topTracks"><p class="threads">Loading…</p></div>
   </section>
 
@@ -173,8 +173,9 @@ const fmtCentral = iso => {
   } catch (e) { return iso; }
 };
 
+let topExpanded = false;
 async function loadTop() {
-  const { songs } = await api('/api/listens/top?limit=10');
+  const { songs } = await api(`/api/listens/top?limit=${topExpanded ? 5000 : 10}`);
   $('topTracks').innerHTML = songs.length
     ? songs.map((s, i) => `
       <div class="track">${artHTML(s.image_url, 54)}<span class="rank">#${i + 1}</span>
@@ -182,9 +183,11 @@ async function loadTop() {
         <div class="a">${esc(s.artist)}${s.genre ? ' · ' + esc(s.genre) : ''}</div></div>
         <span class="plays">${s.play_count} plays</span></div>`).join('')
     : '<p class="threads">No listens yet — log your first song above!</p>';
+  $('topToggle').textContent = topExpanded ? `Show less (${songs.length})` : 'Show all';
   const firstArt = (songs.find(s => s.image_url) || {}).image_url;
   setWallpaper(firstArt);
 }
+$('topToggle').addEventListener('click', () => { topExpanded = !topExpanded; loadTop(); });
 
 const STREAM_TABS = [
   ['all', '✨ For you'],
@@ -260,7 +263,7 @@ async function loadRecs(refresh = false) {
     : `⚠️ Live mining failed${data.mining_error ? ` (${esc(data.mining_error)})` : ''} — showing the sample dataset.`;
   $('recNotice').innerHTML = `<div class="notice">${srcNote}<br>
     Weights — content <b>${data.weights.w_content}</b> · crowd <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
-    (they adapt as you vote 👍/👎).</div>`;
+    (they adapt as you vote 👍/👎).${data.tempo_error ? `<br>⚠️ Tempo data unavailable (${esc(data.tempo_error)}).` : ''}</div>`;
   lastRecs = data;
   renderStream();
   const firstArt = ((data.songs || []).find(s => s.image) || {}).image;

@@ -158,3 +158,14 @@ def test_split_tempo_streams_thresholds():
     streams = engine.split_tempo_streams(ranked)
     assert [s["title"] for s in streams["upbeat"]] == ["Fast", "Edge"]
     assert [s["title"] for s in streams["slowburn"]] == ["Slow"]
+
+
+def test_top_profile_terms_filters_junk_tokens():
+    import numpy as np
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    docs = ["Borderline feat Tame Impala", "Kids ft MGMT",
+            "Borderline Tame Impala"]
+    v = TfidfVectorizer().fit(docs)
+    profile = np.asarray(v.transform(docs).sum(axis=0)).ravel()
+    terms = engine.top_profile_terms(v, profile, n=12)
+    assert "feat" not in terms and "ft" not in terms
