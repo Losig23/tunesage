@@ -141,3 +141,29 @@ def test_recommendations_tempo_streams_with_key(app_client, monkeypatch):
     assert body["tempo_available"] is True
     assert [s["title"] for s in body["streams"]["upbeat"]] == ["Borderline"]
     assert body["streams"]["slowburn"] == []
+
+
+def test_fallback_carries_error_cause():
+    mined = forum.mine_recommendations(_seeds(), api_key="")
+    assert mined["error"] == "LASTFM_API_KEY is not set"
+    with patch("forum.lastfm_client.mine_candidates",
+               side_effect=RuntimeError("boom")):
+        mined = forum.mine_recommendations(_seeds(), api_key="<redacted>")
+    assert mined["source"] == "fallback"
+    assert mined["error"] == "RuntimeError: boom"
+
+
+def test_live_path_error_is_none():
+    fake = {"candidates": [], "sources": []}
+    with patch("forum.lastfm_client.mine_candidates", return_value=fake):
+        mined = forum.mine_recommendations(_seeds(), api_key="<redacted>")
+    assert mined["source"] == "lastfm"
+    assert mined["error"] is None
+
+
+def test_empty_seeds_route_reports_empty_source(app_client):
+    # no listens logged in this fixture's db -> distinct "empty" source
+    # (not "fallback"), so the UI doesn't blame mining.
+    body = app_client.get("/api/recommendations?limit=5").get_json()
+    assert body["source"] == "empty"
+    assert body["songs"] == []

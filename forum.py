@@ -22,10 +22,12 @@ import lastfm as lastfm_client
 def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
     """Mine candidate songs similar to the user's top seeds.
 
-    Returns {"candidates": [...], "threads": [...], "source": "lastfm"|"fallback"}.
+    Returns {"candidates": [...], "threads": [...],
+             "source": "lastfm"|"fallback", "error": str|None}.
     "threads" keeps its name for API/UI compatibility but now carries source
     provenance entries (Last.fm similar-artist pages). Never raises: any
-    failure anywhere -> built-in fallback dataset.
+    failure anywhere -> built-in fallback dataset, with the cause captured
+    in "error" so the UI can say *why* instead of just "unreachable".
     """
     if api_key:
         try:
@@ -39,14 +41,16 @@ def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
                         "url": s["url"]} for s in mined["sources"]]
             return {"candidates": mined["candidates"],
                     "threads": threads,
-                    "source": "lastfm"}
-        except Exception:
-            pass  # fall through to the offline dataset
+                    "source": "lastfm", "error": None}
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+    else:
+        error = "LASTFM_API_KEY is not set"
     return {"candidates": [dict(c) for c in FALLBACK_CANDIDATES],
             "threads": [{"title": "(fallback sample dataset — "
                                  "live mining unreachable)",
                          "subreddit": "", "url": ""}],
-            "source": "fallback"}
+            "source": "fallback", "error": error}
 
 
 # ---------------------------------------------------------------------------

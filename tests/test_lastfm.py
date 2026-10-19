@@ -28,7 +28,8 @@ def tmpdb(tmp_path, monkeypatch):
         return wrapper
 
     for name in ("log_listen", "top_songs", "already_imported",
-                 "record_import", "last_import_at"):
+                 "record_import", "last_import_at",
+                 "get_cached_recommendations", "save_recommendations"):
         monkeypatch.setattr(db, name, _bind(getattr(db, name)))
     return p
 

@@ -85,7 +85,7 @@ def create_app() -> Flask:
 
         seeds = db.top_songs(10)
         if not seeds:
-            return jsonify({"songs": [], "threads": [],
+            return jsonify({"songs": [], "threads": [], "source": "empty",
                             "message": "Log some listens first!"})
 
         mined = forum_miner.mine_recommendations(
@@ -127,6 +127,7 @@ def create_app() -> Flask:
         payload = {"songs": ranked[:limit], "threads": mined["threads"][:10],
                    "source": mined["source"], "weights": weights,
                    "streams": streams, "tempo_available": tempo_available,
+                   "mining_error": mined.get("error"),
                    "v": RECS_CACHE_VERSION,
                    "cached": False}
         db.save_recommendations(payload)
@@ -213,7 +214,7 @@ def _lastfm_config() -> tuple[str, str]:
 
 # Bump when the recommendations payload shape changes so stale cached
 # payloads (which lack new keys like "streams") are never served.
-RECS_CACHE_VERSION = 3
+RECS_CACHE_VERSION = 4
 
 
 app = create_app()
