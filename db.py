@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS songs (
     artist TEXT NOT NULL,
     genre TEXT DEFAULT '',
     tags TEXT DEFAULT '[]',           -- JSON list of mood tags
+    image_url TEXT DEFAULT '',        -- album art (Last.fm); backfilled by _migrate
     play_count INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
     UNIQUE(title, artist)
@@ -72,6 +73,7 @@ def init_db(path: Path | str = DB_PATH) -> None:
     conn = get_conn(path)
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.execute(
             "INSERT OR IGNORE INTO weights (id, w_content, w_forum, w_feedback)"
             " VALUES (1, 0.5, 0.35, 0.15)"
@@ -81,27 +83,48 @@ def init_db(path: Path | str = DB_PATH) -> None:
         conn.close()
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lightweight migrations for DBs created before a column existed.
+
+    CREATE TABLE IF NOT EXISTS won't add columns to an existing table, so
+    each addition gets an explicit guarded ALTER TABLE here.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(songs)")}
+    if "image_url" not in cols:
+        conn.execute("ALTER TABLE songs ADD COLUMN image_url TEXT DEFAULT ''")
+
+
 # ---- songs / listens -------------------------------------------------------
 
 def log_listen(title: str, artist: str, genre: str = "",
-               tags: list | None = None,
+               tags: list | None = None, image_url: str = "",
                path: Path | str = DB_PATH) -> dict:
-    """Upsert a song and increment its play_count. Returns the row as a dict."""
+    """Upsert a song and increment its play_count. Returns the row as a dict.
+
+    image_url is only overwritten when a non-empty one is provided, so a
+    manual log can't blank art that a scrobble import already stored (and
+    vice versa).
+    """
     title, artist = title.strip(), artist.strip()
     genre = (genre or "").strip()
     tags = tags or []
+    image_url = (image_url or "").strip()
     now = int(time.time())
     conn = get_conn(path)
     try:
         conn.execute(
-            """INSERT INTO songs (title, artist, genre, tags, play_count, updated_at)
-               VALUES (?, ?, ?, ?, 1, ?)
+            """INSERT INTO songs (title, artist, genre, tags, image_url,
+                                  play_count, updated_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?)
                ON CONFLICT(title, artist) DO UPDATE SET
                    play_count = play_count + 1,
                    genre = excluded.genre,
                    tags = excluded.tags,
+                   image_url = CASE WHEN excluded.image_url <> ''
+                                    THEN excluded.image_url
+                                    ELSE songs.image_url END,
                    updated_at = excluded.updated_at""",
-            (title, artist, genre, json.dumps(tags), now),
+            (title, artist, genre, json.dumps(tags), image_url, now),
         )
         conn.commit()
         row = conn.execute(

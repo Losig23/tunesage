@@ -9,15 +9,23 @@
           --text:#f1eefc; --muted:#a7a3c7; }
   * { box-sizing:border-box; }
   body { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg);
-         color:var(--text); margin:0; padding:24px; }
+         color:var(--text); margin:0; padding:24px; min-height:100vh; }
+  /* Ambient wallpaper: blurred gradient sampled from album art (JS). */
+  #wallpaper { position:fixed; inset:0; z-index:-1; pointer-events:none;
+         filter:blur(90px) saturate(1.35); opacity:.5; transition:background 1.2s ease;
+         background:
+           radial-gradient(60% 50% at 20% 10%, rgba(139,92,246,.40), transparent 60%),
+           radial-gradient(50% 40% at 85% 20%, rgba(34,211,238,.32), transparent 60%),
+           var(--bg); }
   .wrap { max-width:960px; margin:0 auto; }
   header { text-align:center; margin-bottom:28px; }
   header h1 { font-size:2.4rem; margin:0;
               background:linear-gradient(90deg,var(--accent),var(--accent2));
               -webkit-background-clip:text; background-clip:text; color:transparent; }
   header p { color:var(--muted); }
-  section { background:var(--card); border-radius:14px; padding:20px;
-            margin-bottom:20px; box-shadow:0 4px 24px rgba(0,0,0,.35); }
+  section { background:rgba(27,24,48,.84); border-radius:16px; padding:20px;
+            margin-bottom:20px; box-shadow:0 4px 24px rgba(0,0,0,.35);
+            backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
   h2 { margin-top:0; font-size:1.2rem; }
   form.log { display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:8px; }
   input, button { padding:10px 12px; border-radius:8px; border:1px solid #3b3670;
@@ -27,19 +35,25 @@
   button:hover { filter:brightness(1.15); }
   button.ghost { background:transparent; border:1px solid #3b3670; }
   button.small { padding:6px 10px; font-size:.8rem; }
-  .track, .rec { display:flex; align-items:center; gap:12px; padding:10px 0;
+  .track, .rec { display:flex; align-items:center; gap:14px; padding:12px 0;
                  border-bottom:1px solid #2a2752; }
   .track:last-child, .rec:last-child { border-bottom:none; }
-  .rank { font-weight:700; color:var(--accent2); width:28px; }
-  .meta { flex:1; }
+  .rank { font-weight:700; color:var(--accent2); width:28px; flex-shrink:0; }
+  .meta { flex:1; min-width:0; }
   .meta .t { font-weight:600; }
   .meta .a { color:var(--muted); font-size:.85rem; }
-  .plays { color:var(--muted); font-size:.85rem; }
+  .plays { color:var(--muted); font-size:.85rem; white-space:nowrap; }
+  .art { border-radius:12px; object-fit:cover; flex-shrink:0;
+         box-shadow:0 4px 14px rgba(0,0,0,.45); background:#2a2752; }
+  .art-fallback { display:flex; align-items:center; justify-content:center;
+         border-radius:12px; flex-shrink:0; color:#0f0d1a; font-weight:700;
+         background:linear-gradient(135deg,var(--accent),var(--accent2));
+         box-shadow:0 4px 14px rgba(0,0,0,.45); }
   .bar { height:8px; background:#2a2752; border-radius:4px; overflow:hidden;
          margin:6px 0; }
   .bar > div { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
   .why { color:var(--muted); font-size:.85rem; font-style:italic; }
-  .votes { display:flex; gap:6px; }
+  .votes { display:flex; gap:6px; flex-shrink:0; }
   .voted { outline:2px solid var(--accent2); }
   .threads { color:var(--muted); font-size:.8rem; }
   .threads a { color:var(--accent2); }
@@ -50,10 +64,11 @@
 </style>
 </head>
 <body>
+<div id="wallpaper"></div>
 <div class="wrap">
   <header>
     <h1>🎧 TuneSage</h1>
-    <p>Log what you listen to. We mine music forums and rank picks with a hybrid AI engine.</p>
+    <p>Turn your listening history into picks with a hybrid AI engine.</p>
   </header>
 
   <section>
@@ -95,15 +110,70 @@ async function api(path, opts) {
   return r.json();
 }
 
+/* Album art: <img> when we have a URL, gradient ♪ placeholder otherwise. */
+function artFail(el, size) {
+  const d = document.createElement('div');
+  d.className = 'art-fallback';
+  d.style.width = d.style.height = size + 'px';
+  d.style.fontSize = Math.round(size * 0.42) + 'px';
+  d.textContent = '♪';
+  el.replaceWith(d);
+}
+const artHTML = (url, size) => url
+  ? `<img class="art" width="${size}" height="${size}" src="${esc(url)}" alt="" loading="lazy" onerror="artFail(this, ${size})">`
+  : `<div class="art-fallback" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px">♪</div>`;
+
+/* Ambient wallpaper: sample the average color out of an artwork URL and
+   paint a blurred gradient behind the page. Fails soft (CORS, broken URL)
+   back to the default CSS gradient. */
+function setWallpaper(url) {
+  if (!url) return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 32;
+      const x = c.getContext('2d');
+      x.drawImage(img, 0, 0, 32, 32);
+      const d = x.getImageData(0, 0, 32, 32).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < d.length; i += 16) {
+        r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+      }
+      const hx = v => Math.round(v).toString(16).padStart(2, '0');
+      const base = `#${hx(r / n)}${hx(g / n)}${hx(b / n)}`;
+      const dark = `#${hx(r / n / 3)}${hx(g / n / 3)}${hx(b / n / 3)}`;
+      $('wallpaper').style.background =
+        `radial-gradient(70% 60% at 22% 12%, ${base}59, transparent 65%),` +
+        `radial-gradient(55% 45% at 82% 22%, ${dark}99, transparent 60%), #0f0d1a`;
+    } catch (e) { /* keep default gradient */ }
+  };
+  img.src = url;
+}
+
+/* "2026-10-19T13:46:50Z" -> "Oct 19, 2026, 8:46 AM CDT" */
+const fmtCentral = iso => {
+  try {
+    return new Date(iso).toLocaleString('en-US', {
+      timeZone: 'America/Chicago', month: 'short', day: 'numeric',
+      year: 'numeric', hour: 'numeric', minute: '2-digit',
+      timeZoneName: 'short'
+    });
+  } catch (e) { return iso; }
+};
+
 async function loadTop() {
   const { songs } = await api('/api/listens/top?limit=10');
   $('topTracks').innerHTML = songs.length
     ? songs.map((s, i) => `
-      <div class="track"><span class="rank">#${i + 1}</span>
+      <div class="track">${artHTML(s.image_url, 54)}<span class="rank">#${i + 1}</span>
         <div class="meta"><div class="t">${esc(s.title)}</div>
         <div class="a">${esc(s.artist)}${s.genre ? ' · ' + esc(s.genre) : ''}</div></div>
         <span class="plays">${s.play_count} plays</span></div>`).join('')
     : '<p class="threads">No listens yet — log your first song above!</p>';
+  const firstArt = (songs.find(s => s.image_url) || {}).image_url;
+  setWallpaper(firstArt);
 }
 
 async function loadRecs(refresh = false) {
@@ -118,7 +188,7 @@ async function loadRecs(refresh = false) {
     Weights — content <b>${data.weights.w_content}</b> · crowd <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
     (they adapt as you vote 👍/👎).</div>`;
   $('recs').innerHTML = data.songs.length ? data.songs.map((s, i) => `
-    <div class="rec"><span class="rank">#${i + 1}</span>
+    <div class="rec">${artHTML(s.image, 72)}<span class="rank">#${i + 1}</span>
       <div class="meta">
         <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span></div>
         <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
@@ -130,6 +200,8 @@ async function loadRecs(refresh = false) {
         <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',false,this)">👎</button>
       </div></div>`).join('')
     : '<p class="threads">Log some listens first, then come back for picks!</p>';
+  const firstArt = ((data.songs || []).find(s => s.image) || {}).image;
+  setWallpaper(firstArt);
   $('threads').innerHTML = (data.threads || []).map(t =>
     t.url ? `• <a href="${t.url}" target="_blank" rel="noopener">${esc(t.title)}</a>${t.subreddit ? ` <span>r/${esc(t.subreddit)}</span>` : ''}<br>`
           : `• ${esc(t.title)}<br>`).join('') || '<p>—</p>';
@@ -176,7 +248,7 @@ async function loadLastfm() {
     return;
   }
   const last = status.last_import_at
-    ? `Last import: ${esc(status.last_import_at)}` : 'No imports yet.';
+    ? `Last import: ${fmtCentral(status.last_import_at)}` : 'No imports yet.';
   $('lastfmBody').innerHTML = `
     <p>Scrobbling as <b>${esc(status.username)}</b></p>
     <p class="threads">${esc(last)}</p>

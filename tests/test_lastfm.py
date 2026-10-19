@@ -352,3 +352,104 @@ def test_mine_candidates_raises_when_nothing_found():
          patch("lastfm.time.sleep"):
         with pytest.raises(RuntimeError, match="no candidates"):
             lastfm.mine_candidates("key123", ["Nobody Ever Heard Of Them"])
+
+
+# ---- album artwork -----------------------------------------------------------
+
+def _track_with_images(name, artist, uts):
+    t = _track(name, artist, uts)
+    t["image"] = [
+        {"#text": "http://img/small.png", "size": "small"},
+        {"#text": "http://img/xl.png", "size": "extralarge"},
+        {"#text": "http://img/medium.png", "size": "medium"},
+    ]
+    return t
+
+
+def test_parse_track_picks_largest_image():
+    t = lastfm._parse_track(_track_with_images("A", "B", 1780000000))
+    assert t["image"] == "http://img/xl.png"
+
+
+def test_parse_track_no_images_gives_blank():
+    t = lastfm._parse_track(_track("A", "B", 1780000000))
+    assert t["image"] == ""
+
+
+def test_top_tracks_extracts_image_when_present():
+    payload = {"toptracks": {"track": [
+        {"name": "Borderline", "listeners": "900000", "playcount": "1",
+         "artist": {"name": "Tame Impala"},
+         "image": [{"#text": "http://img/s.png", "size": "small"},
+                   {"#text": "http://img/l.png", "size": "large"}]}]}}
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch("lastfm.requests.get", return_value=resp):
+        tracks = lastfm.get_artist_top_tracks("key123", "Tame Impala")
+    assert tracks[0]["image"] == "http://img/l.png"
+
+
+def test_top_tracks_missing_image_gives_blank():
+    payload = {"toptracks": {"track": [
+        {"name": "Borderline", "listeners": "900000", "playcount": "1",
+         "artist": {"name": "Tame Impala"}}]}}
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch("lastfm.requests.get", return_value=resp):
+        tracks = lastfm.get_artist_top_tracks("key123", "Tame Impala")
+    assert tracks[0]["image"] == ""
+
+
+def test_mine_candidates_carries_image_through():
+    similar = _similar_payload(("Tame Impala", 0.9))
+    tracks = {"toptracks": {"track": [
+        {"name": "Borderline", "listeners": "900000", "playcount": "1",
+         "artist": {"name": "Tame Impala"},
+         "image": [{"#text": "http://img/xl.png", "size": "extralarge"}]}]}}
+    with patch("lastfm.requests.get", _mock_get([similar, tracks])), \
+         patch("lastfm.time.sleep"):
+        mined = lastfm.mine_candidates("key123", ["Arctic Monkeys"],
+                                       max_artists=1, similar_per_artist=1,
+                                       tracks_per_artist=1)
+    assert mined["candidates"][0]["image"] == "http://img/xl.png"
+
+
+def test_log_listen_stores_and_preserves_image(tmpdb):
+    row = db.log_listen("A", "B", image_url="http://img/xl.png")
+    assert row["image_url"] == "http://img/xl.png"
+    # a later manual log with no art must not blank the stored art
+    row = db.log_listen("A", "B")
+    assert row["image_url"] == "http://img/xl.png"
+    # ...but a newer non-empty URL wins
+    row = db.log_listen("A", "B", image_url="http://img/new.png")
+    assert row["image_url"] == "http://img/new.png"
+
+
+def test_migrate_adds_image_url_to_legacy_db(tmp_path):
+    import sqlite3
+    p = tmp_path / "legacy.db"
+    conn = sqlite3.connect(p)
+    # realistic pre-migration schema: every original column, no image_url
+    conn.execute("""CREATE TABLE songs (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL, artist TEXT NOT NULL, genre TEXT DEFAULT '',
+        tags TEXT DEFAULT '[]', play_count INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL, UNIQUE(title, artist))""")
+    conn.commit()
+    conn.close()
+    db.init_db(p)  # CREATE IF NOT EXISTS + _migrate
+    cols = {r[1] for r in sqlite3.connect(p).execute(
+        "PRAGMA table_info(songs)")}
+    assert "image_url" in cols
+    row = db.log_listen("X", "Y", image_url="http://img", path=p)
+    assert row["image_url"] == "http://img"
+
+
+def test_import_route_stores_artwork(app_client, lastfm_env):
+    tracks = [{"title": "Blinding Lights", "artist": "The Weeknd",
+               "album": "After Hours", "played_at": "2026-09-21T21:00:00Z",
+               "image": "http://img/xl.png"}]
+    with patch("lastfm.get_all_recent_tracks", return_value=tracks):
+        r = app_client.post("/api/lastfm/import")
+    assert r.status_code == 200
+    assert r.get_json()["imported"] == 1
+    assert db.top_songs()[0]["image_url"] == "http://img/xl.png"

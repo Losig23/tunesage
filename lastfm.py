@@ -46,6 +46,26 @@ def _text(value) -> str:
     return str(value or "")
 
 
+def _largest_image(item: dict) -> str:
+    """Pick the biggest artwork URL from a Last.fm image list.
+
+    Items look like {"image": [{"#text": url, "size": "small"}, ...]} with
+    sizes small < medium < large < extralarge. Returns "" when absent —
+    callers render a placeholder.
+    """
+    images = _as_list(item.get("image"))
+    rank = {"small": 0, "medium": 1, "large": 2, "extralarge": 3, "mega": 4}
+    best, best_rank = "", -1
+    for img in images:
+        if not isinstance(img, dict):
+            continue
+        url = _text(img.get("#text")).strip()
+        r = rank.get(str(img.get("size") or "").lower(), -1)
+        if url and r >= best_rank:
+            best, best_rank = url, r
+    return best
+
+
 def _request(api_key: str, params: dict) -> dict:
     """Single API call. Raises LastfmError on any failure.
 
@@ -97,6 +117,7 @@ def _parse_track(item: dict) -> dict | None:
         "album": _text(item.get("album")).strip(),
         # ISO-8601 UTC; lexicographic order == chronological order.
         "played_at": played_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "image": _largest_image(item),
     }
 
 
@@ -225,6 +246,7 @@ def get_artist_top_tracks(api_key: str, artist: str,
             "artist": nested_name.strip() or artist,
             "listeners": _to_int(item.get("listeners")),
             "playcount": _to_int(item.get("playcount")),
+            "image": _largest_image(item),
         })
     return out
 
@@ -300,6 +322,7 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                         "title": t["title"], "artist": t["artist"],
                         "genre": "", "tags": [],
                         "mentions": mentions,
+                        "image": t.get("image", ""),
                         "sources": ["https://www.last.fm/music/"
                                     + quote_plus(t["artist"])],
                         "snippets": [snippet],

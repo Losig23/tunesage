@@ -172,7 +172,8 @@ def create_app() -> Flask:
             if db.already_imported("lastfm", t["played_at"]):
                 skipped += 1
                 continue
-            song = db.log_listen(t["title"], t["artist"])
+            song = db.log_listen(t["title"], t["artist"],
+                                 image_url=t.get("image", ""))
             db.record_import("lastfm", t["played_at"], song["id"])
             imported += 1
             titles.append(f"{t['title']} — {t['artist']}")
