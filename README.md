@@ -1,10 +1,10 @@
 # 🎧 TuneSage — AI-Powered Music Recommendations
 
-Log the songs you listen to. TuneSage figures out your taste, mines Reddit
-music forums (`r/MusicSuggestions`, `r/ifyoulikeblank`, `r/LetsTalkMusic`) for
-"songs like X" threads, and ranks candidate songs with a hybrid AI engine
-(content similarity + forum social proof + your feedback). Vote 👍/👎 and the
-ranking weights adapt — simple online learning.
+Log the songs you listen to. TuneSage figures out your taste, pulls candidate
+songs from the Last.fm API (top tracks of artists similar to your most-played
+artists), and ranks them with a hybrid AI engine (content similarity + crowd
+social proof + your feedback). Vote 👍/👎 and the ranking weights adapt —
+simple online learning.
 
 ## Architecture
 
@@ -18,13 +18,13 @@ ranking weights adapt — simple online learning.
               ▼                                        ▼
      ┌────────────────┐                     ┌────────────────────┐
      │ recommender.py │                     │ forum.py           │
-     │ TF-IDF taste   │                     │ Reddit JSON mining │
-     │ profile, cosine│◀──── candidates ────│ regex extraction,  │
-     │ sim, hybrid    │                     │ 6h cache, fallback │
-     │ rank, explain  │                     │ dataset on failure │
-     └───────┬────────┘                     └────────────────────┘
-             ▼
-     ┌────────────────┐
+     │ TF-IDF taste   │                     │ Last.fm candidate  │
+     │ profile, cosine│◀──── candidates ────│ mining: similar    │
+     │ sim, hybrid    │                     │ artists → top      │
+     │ rank, explain  │                     │ tracks, 6h cache,  │
+     └───────┬────────┘                     │ fallback dataset   │
+             ▼                              │ on failure         │
+     ┌────────────────┐                     └────────────────────┘
      │ db.py (SQLite) │
      │ songs, cache,  │
      │ feedback,      │
@@ -67,9 +67,13 @@ direction of your taste, pulled hardest by songs you play most.
 song's TF-IDF vector: `cos(A,B) = A·B / (‖A‖‖B‖)`. Ignores vector magnitude,
 so short vs. long descriptions compare fairly.
 
-**Forum signal.** `forum_score = 0.5·log-scaled mentions + 0.5·lexicon
-sentiment` of the snippets mentioning the candidate. Log scaling gives
-diminishing returns so mega-threads don't dominate.
+**Crowd signal.** `forum_score = 0.5·log-scaled mentions + 0.5·lexicon
+sentiment`. Candidates come from Last.fm (`artist.getSimilar` →
+`artist.getTopTracks`); raw listener counts are log10-bucketed onto the old
+mention-count scale so mega-hits don't pin the score at max. (This module
+originally mined Reddit's public JSON API, but Reddit now 403s
+unauthenticated script clients — the offline fallback dataset remains for
+when the API is unreachable.)
 
 **Hybrid rank.** `score = w_content·cos_sim + w_forum·forum_score +
 w_feedback·feedback_boost`. Voting 👍/👎 nudges the weights (±0.02,

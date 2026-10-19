@@ -51,3 +51,49 @@ def test_never_raises_on_empty_seeds():
     # app.py guards this, but the contract is "never raises"
     mined = forum.mine_recommendations([], api_key="key123")
     assert mined["source"] == "fallback"
+
+
+# ---- end-to-end wiring: /api/recommendations with live mining ---------------
+
+from test_lastfm import tmpdb, app_client  # noqa: F401  (reuse fixtures)
+import db as db_module
+from unittest.mock import MagicMock
+
+
+def _fake_lastfm_get(url, params=None, **kwargs):
+    method = (params or {}).get("method")
+    resp = MagicMock(status_code=200)
+    if method == "artist.getSimilar":
+        resp.json.return_value = {"similarartists": {"artist": [
+            {"name": "Tame Impala", "match": "0.90"}]}}
+    elif method == "artist.getTopTracks":
+        resp.json.return_value = {"toptracks": {"track": [
+            {"name": "Borderline", "listeners": "900000", "playcount": "1",
+             "artist": {"name": "Tame Impala"}}]}}
+    else:
+        raise AssertionError(f"unexpected Last.fm method: {method}")
+    return resp
+
+
+def test_recommendations_endpoint_mines_lastfm_live(app_client, monkeypatch):
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    db_module.log_listen("Blinding Lights", "The Weeknd")
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"):
+        r = app_client.get("/api/recommendations?limit=5&refresh=1")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["source"] == "lastfm"
+    titles = [s["title"] for s in body["songs"]]
+    assert "Borderline" in titles
+    assert all(s["why"] for s in body["songs"])  # explanations attached
+
+
+def test_recommendations_endpoint_falls_back_without_key(app_client,
+                                                         monkeypatch):
+    monkeypatch.delenv("LASTFM_API_KEY", raising=False)
+    db_module.log_listen("505", "Arctic Monkeys")
+    r = app_client.get("/api/recommendations?limit=5&refresh=1")
+    assert r.status_code == 200
+    assert r.get_json()["source"] == "fallback"
