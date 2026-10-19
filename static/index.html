@@ -33,6 +33,16 @@
   button:hover { filter:brightness(1.15); }
   button.ghost { background:transparent; border:1px solid #2e2e2e; }
   button.small { padding:6px 10px; font-size:.8rem; }
+  /* Floating log button + side panel (manual logging, zero page space). */
+  #logFab { position:fixed; right:22px; bottom:22px; width:62px; height:62px;
+    border-radius:50%; font-size:1.7rem; line-height:1; padding:0; z-index:60;
+    box-shadow:0 6px 20px rgba(0,0,0,.55); }
+  #logPanel { position:fixed; right:22px; bottom:96px; z-index:60; display:none;
+    width:min(360px, calc(100vw - 44px)); background:rgba(20,20,20,.97);
+    border-radius:16px; padding:20px; box-shadow:0 8px 32px rgba(0,0,0,.5); }
+  #logPanel.open { display:block; }
+  #logPanel form.log { grid-template-columns:1fr; }
+  #logPanel h2 { font-size:1.1rem; }
   .track, .rec { display:flex; align-items:center; gap:14px; padding:12px 0;
                  border-bottom:1px solid #242424; }
   .track:last-child, .rec:last-child { border-bottom:none; }
@@ -77,27 +87,6 @@
   </header>
 
   <section>
-    <h2>➕ Log a listen</h2>
-    <form class="log" id="logForm">
-      <input id="fTitle" placeholder="Song title" required>
-      <input id="fArtist" placeholder="Artist" required>
-      <input id="fGenre" placeholder="Genre (optional)">
-      <input id="fTags" placeholder="Mood tags, comma separated">
-      <button type="submit">Log</button>
-    </form>
-  </section>
-
-  <section>
-    <h2>📻 Last.fm</h2>
-    <div id="lastfmBody"><p class="threads">Loading…</p></div>
-  </section>
-
-  <section>
-    <h2>🔥 Your top tracks <button class="ghost small" id="topToggle">Show all</button></h2>
-    <div id="topTracks"><p class="threads">Loading…</p></div>
-  </section>
-
-  <section>
     <h2>✨ Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
     <div id="recNotice"></div>
     <div class="tabs" id="streamTabs"></div>
@@ -106,9 +95,30 @@
     <h3 style="font-size:.95rem;color:var(--muted)">Sources mined</h3>
     <div id="threads" class="threads"></div>
     <p class="threads">Listening data by <a href="https://www.last.fm" target="_blank" rel="noopener">Last.fm</a> · Tempo data by <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a></p>
-    <h3 style="font-size:.95rem;color:var(--muted)">Sources mined</h3>
-    <div id="threads" class="threads"></div>
   </section>
+
+  <section>
+    <h2>🔥 Your top tracks <button class="ghost small" id="topToggle">Show all</button></h2>
+    <div id="topTracks"><p class="threads">Loading…</p></div>
+  </section>
+
+  <section>
+    <h2>📻 Last.fm</h2>
+    <div id="lastfmBody"><p class="threads">Loading…</p></div>
+  </section>
+</div>
+
+<!-- Floating log button + side panel: manual logging without taking page space. -->
+<button id="logFab" title="Log a listen">＋</button>
+<div id="logPanel">
+  <h2>➕ Log a listen</h2>
+  <form class="log" id="logForm">
+    <input id="fTitle" placeholder="Song title" required>
+    <input id="fArtist" placeholder="Artist" required>
+    <input id="fGenre" placeholder="Genre (optional)">
+    <input id="fTags" placeholder="Mood tags, comma separated">
+    <button type="submit">Log</button>
+  </form>
 </div>
 
 <script>
@@ -226,8 +236,7 @@ function recCard(s, i) {
       <div class="meta">
         <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span>${s.via ? `<span class="via">via ${esc(s.via)}</span>` : ''}</div>
         <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
-        <div class="scores">score ${s.score} · content ${s.content_score} · crowd ${s.forum_score} · feedback ${s.feedback_boost}${s.tempo ? ` · ${Math.round(s.tempo)} BPM` : ''}</div>
-        <div class="why">${esc(s.why)}</div>
+        <div class="scores">${Math.round(s.score * 100)}/100${s.tempo ? ` · ${Math.round(s.tempo)} BPM` : ''}</div>
       </div>
       <div class="votes">
         <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',true,this)">👍</button>
@@ -291,7 +300,17 @@ $('logForm').addEventListener('submit', async e => {
       tags: $('fTags').value.split(',').map(t => t.trim()).filter(Boolean)
     }) });
   e.target.reset();
+  $('logPanel').classList.remove('open');
   loadTop();
+});
+
+/* Floating log panel toggle. */
+$('logFab').addEventListener('click', () => {
+  $('logPanel').classList.toggle('open');
+  if ($('logPanel').classList.contains('open')) $('fTitle').focus();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') $('logPanel').classList.remove('open');
 });
 
 $('refreshBtn').addEventListener('click', () => loadRecs(true));

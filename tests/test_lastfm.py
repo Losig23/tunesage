@@ -591,3 +591,28 @@ def test_largest_image_skips_lastfm_default_placeholder():
         {"#text": "https://lastfm.freetls.fastly.net/i/u/300x300/"
                   "2a96cbd8b46e442fc41c2b86b821b4ce.png", "size": "large"}]}
     assert lastfm._largest_image(only_default) == ""
+
+
+def test_blank_default_artwork_shared_across_artists():
+    import artwork as artwork_mod
+    cands = [
+        {"title": "A", "artist": "Art1", "image": "https://x/star.png"},
+        {"title": "B", "artist": "Art2", "image": "https://x/star.png"},
+        {"title": "C", "artist": "Art3", "image": "https://x/star.png"},
+        {"title": "D", "artist": "Art4", "image": "https://x/real.png"},
+    ]
+    with patch.object(artwork_mod, "fetch_itunes_artwork",
+                      return_value="https://itunes/d.jpg"):
+        lastfm._blank_default_artwork(cands)
+    assert [c["image"] for c in cands[:3]] == ["https://itunes/d.jpg"] * 3
+    assert cands[3]["image"] == "https://x/real.png"
+
+
+def test_blank_default_artwork_keeps_shared_album_art():
+    # same artist, same image (one album) -> not the default placeholder
+    cands = [
+        {"title": "A", "artist": "Art1", "image": "https://x/album.png"},
+        {"title": "B", "artist": "Art1", "image": "https://x/album.png"},
+    ]
+    lastfm._blank_default_artwork(cands)
+    assert all(c["image"] == "https://x/album.png" for c in cands)

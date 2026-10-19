@@ -386,6 +386,28 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                 }
     candidates = sorted(aggregate.values(),
                         key=lambda c: c["mentions"], reverse=True)
+    _blank_default_artwork(candidates)
     if not candidates:
         raise RuntimeError("Last.fm mining returned no candidates")
     return {"candidates": candidates, "sources": sources}
+
+
+def _blank_default_artwork(candidates: list[dict], min_artists: int = 3) -> None:
+    """Blank artwork URLs shared across several distinct artists.
+
+    Last.fm serves the same generic star for tracks without real artwork
+    (its exact URL isn't a stable hash we can filter). The same image URL
+    attached to tracks by 3+ different artists is that placeholder, not
+    real art — blank it so the iTunes fallback (or UI placeholder) applies.
+    """
+    artists_by_image: dict[str, set[str]] = {}
+    for c in candidates:
+        img = c.get("image")
+        if img:
+            artists_by_image.setdefault(img, set()).add(
+                c["artist"].strip().lower())
+    for c in candidates:
+        img = c.get("image")
+        if img and len(artists_by_image.get(img, ())) >= min_artists:
+            c["image"] = (artwork.fetch_itunes_artwork(c["title"], c["artist"])
+                          or "")
