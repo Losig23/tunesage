@@ -138,3 +138,11 @@ def test_get_tempo_uses_getsong_co_endpoint():
         bpm.get_tempo("k", "X", "Y")
     url = mock_get.call_args[0][0]
     assert url == "https://api.getsong.co/search/"
+
+
+def test_get_tempo_uses_both_type_with_artist_refinement():
+    with patch("bpm.requests.get", return_value=_resp([])) as mock_get:
+        bpm.get_tempo("k", "Blinding Lights", "The Weeknd")
+    params = mock_get.call_args[1]["params"]
+    assert params["type"] == "both"
+    assert params["lookup"] == "song:Blinding Lights artist:The Weeknd"

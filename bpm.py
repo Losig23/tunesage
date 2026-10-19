@@ -47,11 +47,15 @@ def get_tempo(api_key: str, title: str, artist: str) -> float | None:
     """
     if not api_key or not title:
         raise BpmError("API key and title are required.")
+    # Docs: type=song takes a plain title; the song:/artist: prefixes are
+    # only for type=both — which is what we want (refine by artist).
+    lookup = f"song:{title.strip()}"
+    if artist and artist.strip():
+        lookup += f" artist:{artist.strip()}"
     try:
         r = requests.get(
             API_URL,
-            params={"api_key": api_key, "type": "song",
-                    "lookup": f"song:{title}"},
+            params={"api_key": api_key, "type": "both", "lookup": lookup},
             timeout=TIMEOUT,
         )
     except requests.RequestException as e:

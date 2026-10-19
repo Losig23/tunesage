@@ -87,7 +87,7 @@
   </header>
 
   <section>
-    <h2>✨ Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
+    <h2>Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
     <div id="recNotice"></div>
     <div class="tabs" id="streamTabs"></div>
     <p class="threads" id="streamDesc"></p>
@@ -98,12 +98,12 @@
   </section>
 
   <section>
-    <h2>🔥 Your top tracks <button class="ghost small" id="topToggle">Show all</button></h2>
+    <h2>Your top tracks <button class="ghost small" id="topToggle">Show all</button></h2>
     <div id="topTracks"><p class="threads">Loading…</p></div>
   </section>
 
   <section>
-    <h2>📻 Last.fm</h2>
+    <h2>Last.fm</h2>
     <div id="lastfmBody"><p class="threads">Loading…</p></div>
   </section>
 </div>
@@ -111,7 +111,7 @@
 <!-- Floating log button + side panel: manual logging without taking page space. -->
 <button id="logFab" title="Log a listen">＋</button>
 <div id="logPanel">
-  <h2>➕ Log a listen</h2>
+  <h2>Log a listen</h2>
   <form class="log" id="logForm">
     <input id="fTitle" placeholder="Song title" required>
     <input id="fArtist" placeholder="Artist" required>
@@ -266,7 +266,7 @@ async function loadRecs(refresh = false) {
   $('recs').innerHTML = '<p class="threads">Mining candidates & scoring…</p>';
   const data = await api(`/api/recommendations?limit=10&refresh=${refresh ? 1 : 0}`);
   const srcNote = data.source === 'lastfm'
-    ? `⛏️ Mined live from Last.fm — top tracks of artists similar to yours${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`
+    ? `Mined live from Last.fm — top tracks of artists similar to yours${data.cached ? ` (cached ${Math.round((data._cache_age_seconds||0)/60)} min ago)` : ''}.`
     : data.source === 'empty'
     ? '📭 No listening history yet — log or import some scrobbles.'
     : `⚠️ Live mining failed${data.mining_error ? ` (${esc(data.mining_error)})` : ''} — showing the sample dataset.`;
