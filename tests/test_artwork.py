@@ -5,9 +5,11 @@ from unittest.mock import MagicMock, patch
 import artwork
 
 
-def _itunes_resp(artwork_url=None):
+def _itunes_resp(artwork_url=None, artist="Tame Impala", track="Borderline"):
     r = MagicMock(status_code=200)
-    r.json.return_value = ({"results": [{"artworkUrl100": artwork_url}]}
+    r.json.return_value = ({"results": [{"artworkUrl100": artwork_url,
+                                         "artistName": artist,
+                                         "trackName": track}]}
                            if artwork_url else {"results": []})
     return r
 
@@ -63,3 +65,34 @@ def test_mine_candidates_falls_back_to_itunes_art():
     cand = mined["candidates"][0]
     assert cand["image"] == "https://itunes/art.jpg"
     mock_art.assert_called_once_with("Kids", "MGMT")
+
+
+def test_fetch_itunes_artwork_rejects_artist_mismatch():
+    with patch("artwork.requests.get",
+               return_value=_itunes_resp(
+                   "https://is1-ssl.mzstatic.com/image/100x100bb.jpg",
+                   artist="Someone Else")):
+        assert artwork.fetch_itunes_artwork("Borderline", "Tame Impala") == ""
+
+
+def test_fetch_itunes_artwork_skips_to_matching_hit():
+    r = MagicMock(status_code=200)
+    r.json.return_value = {"results": [
+        {"artworkUrl100": "https://x/wrong100x100bb.jpg",
+         "artistName": "Gaidaa", "trackName": "Stranger (feat. Saba)"},
+        {"artworkUrl100": "https://x/right100x100bb.jpg",
+         "artistName": "Saba", "trackName": "Life"},
+    ]}
+    with patch("artwork.requests.get", return_value=r):
+        url = artwork.fetch_itunes_artwork("Life", "Saba")
+    assert url == "https://x/right300x300bb.jpg"
+
+
+def test_fetch_itunes_artwork_rejects_wrong_title_same_artist():
+    r = MagicMock(status_code=200)
+    r.json.return_value = {"results": [
+        {"artworkUrl100": "https://x/other100x100bb.jpg",
+         "artistName": "Saba", "trackName": "Symmetry"},
+    ]}
+    with patch("artwork.requests.get", return_value=r):
+        assert artwork.fetch_itunes_artwork("Life", "Saba") == ""

@@ -616,3 +616,20 @@ def test_blank_default_artwork_keeps_shared_album_art():
     ]
     lastfm._blank_default_artwork(cands)
     assert all(c["image"] == "https://x/album.png" for c in cands)
+
+
+def test_prefer_itunes_artwork_replaces_lastfm():
+    import artwork as artwork_mod
+    cands = [{"title": "Borderline", "artist": "Tame Impala",
+              "image": "http://img/xl.png"}]
+    with patch.object(artwork_mod, "fetch_itunes_artwork",
+                      return_value="https://itunes/b.jpg"):
+        lastfm._prefer_itunes_artwork(cands, max_workers=1)
+    assert cands[0]["image"] == "https://itunes/b.jpg"
+
+
+def test_prefer_itunes_artwork_keeps_lastfm_on_miss():
+    cands = [{"title": "X", "artist": "Y", "image": "http://img/xl.png"}]
+    # autouse fixture stubs fetch_itunes_artwork -> "" (a miss)
+    lastfm._prefer_itunes_artwork(cands, max_workers=1)
+    assert cands[0]["image"] == "http://img/xl.png"

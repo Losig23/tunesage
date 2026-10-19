@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
@@ -376,10 +377,8 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                     "mentions": mentions,
                     "listeners": t["listeners"],
                     "via": info["via"],  # which of your artists led us here
-                    # Last.fm art, else iTunes fallback, else UI placeholder.
-                    "image": (t.get("image", "")
-                              or artwork.fetch_itunes_artwork(
-                                  t["title"], t["artist"])),
+                    "image": t.get("image", ""),  # Last.fm art; iTunes
+                    # pass below prefers real artwork over it
                     "sources": ["https://www.last.fm/music/"
                                 + quote_plus(t["artist"])],
                     "snippets": [snippet],
@@ -387,9 +386,27 @@ def mine_candidates(api_key: str, seed_artists: list[str],
     candidates = sorted(aggregate.values(),
                         key=lambda c: c["mentions"], reverse=True)
     _blank_default_artwork(candidates)
+    _prefer_itunes_artwork(candidates)
     if not candidates:
         raise RuntimeError("Last.fm mining returned no candidates")
     return {"candidates": candidates, "sources": sources}
+
+
+def _prefer_itunes_artwork(candidates: list[dict], max_workers: int = 8) -> None:
+    """Resolve artwork via iTunes Search, preferring it over Last.fm art.
+
+    Last.fm's generic placeholder can't be detected reliably, so iTunes —
+    real artwork for virtually all commercial tracks — wins whenever it
+    returns an artist-matching result. Runs concurrently (~40 lookups in a
+    few seconds). Best-effort: misses keep whatever art is already there.
+    """
+    def _resolve(c: dict) -> None:
+        art = artwork.fetch_itunes_artwork(c["title"], c["artist"])
+        if art:
+            c["image"] = art
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        list(ex.map(_resolve, candidates))
 
 
 def _blank_default_artwork(candidates: list[dict], min_artists: int = 3) -> None:

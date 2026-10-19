@@ -221,7 +221,7 @@ def _lastfm_config() -> tuple[str, str]:
 
 # Bump when the recommendations payload shape changes so stale cached
 # payloads (which lack new keys like "streams") are never served.
-RECS_CACHE_VERSION = 4
+RECS_CACHE_VERSION = 5
 
 
 app = create_app()
