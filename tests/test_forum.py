@@ -213,8 +213,7 @@ def test_tempo_available_only_with_real_data(app_client, monkeypatch):
          patch("lastfm.time.sleep"), \
          patch("bpm.requests.get",
                return_value=MagicMock(status_code=200,
-                                      **{"json.return_value": {"search": []}})), \
-         patch("bpm.time.sleep"):
+                                      **{"json.return_value": {"search": []}})):
         body = app_client.get(
             "/api/recommendations?limit=5&refresh=1").get_json()
     assert body["tempo_available"] is False
@@ -230,8 +229,7 @@ def test_tempo_error_surfaced_on_bad_key(app_client, monkeypatch):
     bad.json.return_value = {"error": "Invalid API Key, or inactive."}
     with patch("lastfm.requests.get", _fake_lastfm_get), \
          patch("lastfm.time.sleep"), \
-         patch("bpm.requests.get", return_value=bad), \
-         patch("bpm.time.sleep"):
+         patch("bpm.requests.get", return_value=bad):
         body = app_client.get(
             "/api/recommendations?limit=5&refresh=1").get_json()
     assert body["tempo_available"] is False

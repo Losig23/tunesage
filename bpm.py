@@ -18,7 +18,7 @@ see the dashboard footer).
 
 from __future__ import annotations
 
-import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -118,35 +118,51 @@ def _search_tempo(api_key: str, type_: str, lookup: str,
 
 
 def fill_tempos(api_key: str, candidates: list[dict],
-                sleep: float = 0.2) -> int:
+                max_workers: int = 6) -> int:
     """Attach tempo to candidates in place. Returns # of API lookups made.
 
-    Checks the persistent cache first; only cache misses hit the network.
-    Per-track failures are swallowed (tempo stays None) so one bad lookup
-    can't break a refresh.
+    Checks the persistent cache first (fast, no network); only cache misses
+    hit the API, concurrently. Per-track failures are swallowed (tempo stays
+    None) so one bad lookup can't break a refresh. Key-level errors abort
+    the whole batch so the caller can surface them.
     """
     if not api_key:
         return 0
-    lookups = 0
+    todo = []
     for c in candidates:
         if c.get("tempo"):
             continue
         title, artist = c.get("title", ""), c.get("artist", "")
         try:
             cached = db.get_tempo(title, artist)
-            if cached is not None:
-                c["tempo"] = cached
-                continue
+        except Exception:
+            cached = None
+        if cached is not None:
+            c["tempo"] = cached
+        else:
+            todo.append(c)
+
+    def _lookup(c: dict) -> int:
+        title, artist = c.get("title", ""), c.get("artist", "")
+        try:
             tempo = get_tempo(api_key, title, artist)
-            lookups += 1
-            time.sleep(sleep)
         except BpmError as e:
             if "api key" in str(e).lower():
                 raise  # key-level problem: abort so the caller surfaces it
-            continue  # one bad track must not break the batch
+            return 0
         except Exception:
-            continue  # unexpected shape/bug per track: skip, don't kill all
-        if tempo is not None:
+            return 0  # one bad track must not break the batch
+        if tempo is None:
+            return 0
+        try:
             db.set_tempo(title, artist, tempo)
-            c["tempo"] = tempo
+        except Exception:
+            pass
+        c["tempo"] = tempo
+        return 1
+
+    lookups = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for f in [ex.submit(_lookup, c) for c in todo]:
+            lookups += f.result()  # re-raises key errors
     return lookups

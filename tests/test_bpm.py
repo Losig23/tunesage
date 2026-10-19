@@ -99,9 +99,9 @@ def test_fill_tempos_caches_misses_and_swallows_errors(tmpdb):
     bad.text = "boom"
     cands = [{"title": "Good", "artist": "Artist"},
              {"title": "Bad", "artist": "Artist"}]
-    with patch("bpm.requests.get", side_effect=[ok, bad]), \
-         patch("bpm.time.sleep"):
-        n = bpm.fill_tempos("k", cands)
+    # max_workers=1: deterministic request order for the side_effect list
+    with patch("bpm.requests.get", side_effect=[ok, bad]):
+        n = bpm.fill_tempos("k", cands, max_workers=1)
     assert n == 1  # only the successful lookup counted
     assert cands[0]["tempo"] == 120.0
     assert "tempo" not in cands[1]  # failure swallowed, no tempo key
@@ -127,8 +127,7 @@ def test_fill_tempos_reraises_key_errors(tmpdb):
     r = MagicMock(status_code=200)
     r.json.return_value = {"error": "Invalid API Key, or inactive."}
     cands = [{"title": "X", "artist": "Y"}]
-    with patch("bpm.requests.get", return_value=r), \
-         patch("bpm.time.sleep"):
+    with patch("bpm.requests.get", return_value=r):
         with pytest.raises(bpm.BpmError, match="Invalid API Key"):
             bpm.fill_tempos("badkey", cands)
 
