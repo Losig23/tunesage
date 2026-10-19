@@ -312,6 +312,7 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                     # signal, merge provenance.
                     if mentions > existing["mentions"]:
                         existing["mentions"] = mentions
+                        existing["listeners"] = t["listeners"]
                         existing["snippets"] = [snippet]
                     for s in (f"https://www.last.fm/music/"
                               + quote_plus(t["artist"]),):
@@ -322,6 +323,8 @@ def mine_candidates(api_key: str, seed_artists: list[str],
                         "title": t["title"], "artist": t["artist"],
                         "genre": "", "tags": [],
                         "mentions": mentions,
+                        "listeners": t["listeners"],
+                        "via": seed,  # which of your artists led us here
                         "image": t.get("image", ""),
                         "sources": ["https://www.last.fm/music/"
                                     + quote_plus(t["artist"])],

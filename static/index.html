@@ -60,6 +60,13 @@
   .notice { background:#2a1f4d; border:1px solid var(--accent); border-radius:8px;
             padding:10px 14px; font-size:.85rem; margin-bottom:12px; }
   .scores { font-size:.75rem; color:var(--muted); }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; margin:2px 0 10px; }
+  .tab { background:transparent; border:1px solid #3b3670; color:var(--muted);
+         font-weight:600; }
+  .tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .via { display:inline-block; font-size:.72rem; color:var(--accent2);
+         border:1px solid #3b3670; border-radius:20px; padding:2px 8px;
+         margin-left:8px; vertical-align:middle; font-style:normal; }
   @media (max-width:640px){ form.log{ grid-template-columns:1fr 1fr; } }
 </style>
 </head>
@@ -95,6 +102,13 @@
   <section>
     <h2>✨ Recommendations <button class="ghost small" id="refreshBtn">↻ Refresh (re-mine)</button></h2>
     <div id="recNotice"></div>
+    <div class="tabs" id="streamTabs">
+      <button class="tab active" data-stream="all">✨ For you</button>
+      <button class="tab" data-stream="mainstream">📈 Mainstream</button>
+      <button class="tab" data-stream="niche">🪩 Niche</button>
+      <button class="tab" data-stream="underground">🕳️ Underground</button>
+    </div>
+    <p class="threads" id="streamDesc"></p>
     <div id="recs"><p class="threads">Loading…</p></div>
     <h3 style="font-size:.95rem;color:var(--muted)">Sources mined</h3>
     <div id="threads" class="threads"></div>
@@ -176,6 +190,45 @@ async function loadTop() {
   setWallpaper(firstArt);
 }
 
+const STREAM_DESC = {
+  all: 'Ranked for your taste across everything we found.',
+  mainstream: 'Big, proven crowd-pleasers — the most-listened tracks among your candidates.',
+  niche: 'Cult favorites — a solid following, not chart-toppers.',
+  underground: 'Deep cuts — the least-heard tracks in your candidate pool. Highest discovery potential.'
+};
+let lastRecs = null;
+let activeStream = 'all';
+
+function recCard(s, i) {
+  return `
+    <div class="rec">${artHTML(s.image, 72)}<span class="rank">#${i + 1}</span>
+      <div class="meta">
+        <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span>${s.via ? `<span class="via">via ${esc(s.via)}</span>` : ''}</div>
+        <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
+        <div class="scores">score ${s.score} · content ${s.content_score} · crowd ${s.forum_score} · feedback ${s.feedback_boost}</div>
+        <div class="why">${esc(s.why)}</div>
+      </div>
+      <div class="votes">
+        <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',true,this)">👍</button>
+        <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',false,this)">👎</button>
+      </div></div>`;
+}
+
+function renderStream() {
+  if (!lastRecs) return;
+  const streams = lastRecs.streams || {};
+  const songs = activeStream === 'all' ? lastRecs.songs
+    : (streams[activeStream] || lastRecs.songs);
+  $('streamDesc').textContent = STREAM_DESC[activeStream] || '';
+  $('recs').innerHTML = songs.length ? songs.map(recCard).join('')
+    : '<p class="threads">Log some listens first, then come back for picks!</p>';
+  document.querySelectorAll('#streamTabs .tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.stream === activeStream));
+}
+
+document.querySelectorAll('#streamTabs .tab').forEach(b =>
+  b.addEventListener('click', () => { activeStream = b.dataset.stream; renderStream(); }));
+
 async function loadRecs(refresh = false) {
   $('recs').innerHTML = '<p class="threads">Mining candidates & scoring…</p>';
   const data = await api(`/api/recommendations?limit=10&refresh=${refresh ? 1 : 0}`);
@@ -187,19 +240,8 @@ async function loadRecs(refresh = false) {
   $('recNotice').innerHTML = `<div class="notice">${srcNote}<br>
     Weights — content <b>${data.weights.w_content}</b> · crowd <b>${data.weights.w_forum}</b> · feedback <b>${data.weights.w_feedback}</b>
     (they adapt as you vote 👍/👎).</div>`;
-  $('recs').innerHTML = data.songs.length ? data.songs.map((s, i) => `
-    <div class="rec">${artHTML(s.image, 72)}<span class="rank">#${i + 1}</span>
-      <div class="meta">
-        <div class="t">${esc(s.title)} <span class="a">— ${esc(s.artist)}</span></div>
-        <div class="bar"><div style="width:${Math.round(s.score * 100)}%"></div></div>
-        <div class="scores">score ${s.score} · content ${s.content_score} · crowd ${s.forum_score} · feedback ${s.feedback_boost}</div>
-        <div class="why">${esc(s.why)}</div>
-      </div>
-      <div class="votes">
-        <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',true,this)">👍</button>
-        <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',false,this)">👎</button>
-      </div></div>`).join('')
-    : '<p class="threads">Log some listens first, then come back for picks!</p>';
+  lastRecs = data;
+  renderStream();
   const firstArt = ((data.songs || []).find(s => s.image) || {}).image;
   setWallpaper(firstArt);
   $('threads').innerHTML = (data.threads || []).map(t =>

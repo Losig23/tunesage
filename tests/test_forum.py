@@ -97,3 +97,15 @@ def test_recommendations_endpoint_falls_back_without_key(app_client,
     r = app_client.get("/api/recommendations?limit=5&refresh=1")
     assert r.status_code == 200
     assert r.get_json()["source"] == "fallback"
+
+
+def test_recommendations_payload_includes_streams(app_client, monkeypatch):
+    monkeypatch.setenv("LASTFM_API_KEY", "key123")
+    db_module.log_listen("505", "Arctic Monkeys")
+    with patch("lastfm.requests.get", _fake_lastfm_get), \
+         patch("lastfm.time.sleep"):
+        r = app_client.get("/api/recommendations?limit=5&refresh=1")
+    body = r.get_json()
+    assert set(body["streams"]) == {"mainstream", "niche", "underground"}
+    total = sum(len(v) for v in body["streams"].values())
+    assert total == len(body["songs"])  # every song lands in exactly one tier

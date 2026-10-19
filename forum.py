@@ -55,62 +55,62 @@ def mine_recommendations(seed_songs: list[dict], api_key: str = "") -> dict:
 # ---------------------------------------------------------------------------
 FALLBACK_CANDIDATES = [
     {"title": "Blinding Lights", "artist": "The Weeknd", "genre": "pop",
-     "tags": ["energetic", "night-drive"], "mentions": 9,
+     "tags": ["energetic", "night-drive"], "mentions": 9, "listeners": 4200000,
      "sources": ["https://www.last.fm/music/The+Weeknd (sample)"],
      "snippets": ["I love Blinding Lights by The Weeknd, absolute masterpiece "
                   "for night drives, such a catchy synth gem"]},
     {"title": "Levitating", "artist": "Dua Lipa", "genre": "pop",
-     "tags": ["energetic", "dance"], "mentions": 7,
+     "tags": ["energetic", "dance"], "mentions": 7, "listeners": 2100000,
      "sources": ["https://www.last.fm/music/Dua+Lipa (sample)"],
      "snippets": ["Levitating by Dua Lipa is fantastic, incredible groove, "
                   "highly recommend if you like dance pop"]},
     {"title": "Heat Waves", "artist": "Glass Animals", "genre": "indie",
-     "tags": ["chill", "dreamy"], "mentions": 6,
+     "tags": ["chill", "dreamy"], "mentions": 6, "listeners": 1600000,
      "sources": ["https://www.last.fm/music/Glass+Animals (sample)"],
      "snippets": ["Heat Waves by Glass Animals is beautiful and haunting, "
                   "love the dreamy vibe"]},
     {"title": "Sweater Weather", "artist": "The Neighbourhood", "genre": "indie rock",
-     "tags": ["chill", "moody"], "mentions": 5,
+     "tags": ["chill", "moody"], "mentions": 5, "listeners": 900000,
      "sources": ["https://www.last.fm/music/The+Neighbourhood (sample)"],
      "snippets": ["Sweater Weather by The Neighbourhood, great moody indie "
                   "classic, always recommend"]},
     {"title": "HUMBLE.", "artist": "Kendrick Lamar", "genre": "hip-hop",
-     "tags": ["energetic", "bold"], "mentions": 8,
+     "tags": ["energetic", "bold"], "mentions": 8, "listeners": 2800000,
      "sources": ["https://www.last.fm/music/Kendrick+Lamar (sample)"],
      "snippets": ["HUMBLE. by Kendrick Lamar is brilliant, powerful beat, "
                   "an amazing hip-hop track"]},
     {"title": "SICKO MODE", "artist": "Travis Scott", "genre": "hip-hop",
-     "tags": ["energetic", "hype"], "mentions": 6,
+     "tags": ["energetic", "hype"], "mentions": 6, "listeners": 1900000,
      "sources": ["https://www.last.fm/music/Travis+Scott (sample)"],
      "snippets": ["SICKO MODE by Travis Scott goes so hard, awesome production, "
                   "love the beat switches"]},
     {"title": "Take Five", "artist": "Dave Brubeck Quartet", "genre": "jazz",
-     "tags": ["chill", "sophisticated"], "mentions": 4,
+     "tags": ["chill", "sophisticated"], "mentions": 4, "listeners": 320000,
      "sources": ["https://www.last.fm/music/Dave+Brubeck+Quartet (sample)"],
      "snippets": ["Take Five by Dave Brubeck Quartet is a gorgeous jazz "
                   "masterpiece, timeless and brilliant"]},
     {"title": "So What", "artist": "Miles Davis", "genre": "jazz",
-     "tags": ["chill", "cool"], "mentions": 4,
+     "tags": ["chill", "cool"], "mentions": 4, "listeners": 280000,
      "sources": ["https://www.last.fm/music/Miles+Davis (sample)"],
      "snippets": ["So What by Miles Davis, the best modal jazz track, "
                   "beautiful and classic"]},
     {"title": "Strobe", "artist": "deadmau5", "genre": "electronic",
-     "tags": ["chill", "epic"], "mentions": 5,
+     "tags": ["chill", "epic"], "mentions": 5, "listeners": 750000,
      "sources": ["https://www.last.fm/music/deadmau5 (sample)"],
      "snippets": ["Strobe by deadmau5 is incredible, such a powerful build, "
                   "an electronic gem, gives me chills"]},
     {"title": "Midnight City", "artist": "M83", "genre": "electronic",
-     "tags": ["dreamy", "night-drive"], "mentions": 5,
+     "tags": ["dreamy", "night-drive"], "mentions": 5, "listeners": 1100000,
      "sources": ["https://www.last.fm/music/M83 (sample)"],
      "snippets": ["Midnight City by M83 is fantastic synthwave, love it, "
                   "perfect night drive song"]},
     {"title": "505", "artist": "Arctic Monkeys", "genre": "indie rock",
-     "tags": ["moody", "romantic"], "mentions": 5,
+     "tags": ["moody", "romantic"], "mentions": 5, "listeners": 1300000,
      "sources": ["https://www.last.fm/music/Arctic+Monkeys (sample)"],
      "snippets": ["505 by Arctic Monkeys is amazing, haunting and beautiful, "
                   "highly recommend"]},
     {"title": "Fluorescent Adolescent", "artist": "Arctic Monkeys",
-     "genre": "indie rock", "tags": ["energetic", "fun"], "mentions": 3,
+     "genre": "indie rock", "tags": ["energetic", "fun"], "mentions": 3, "listeners": 95000,
      "sources": ["https://www.last.fm/music/Arctic+Monkeys (sample)"],
      "snippets": ["Fluorescent Adolescent by Arctic Monkeys is great, catchy "
                   "and fun indie rock"]},

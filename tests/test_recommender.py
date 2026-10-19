@@ -112,3 +112,36 @@ def test_snippet_sentiment_bounds():
     assert engine.snippet_sentiment("love amazing masterpiece") == 1.0
     assert engine.snippet_sentiment("terrible awful boring") == -1.0
     assert engine.snippet_sentiment("the cat sat on the mat") == 0.0
+
+
+def _ranked(n):
+    # ranked by score desc already; listeners spread so tertiles are clear
+    return [{"title": f"T{i}", "artist": "A", "score": 1.0 - i / 100,
+             "listeners": (n - i) * 1000} for i in range(n)]
+
+
+def test_split_streams_tertiles_by_listeners():
+    streams = engine.split_streams(_ranked(9))
+    assert [len(v) for v in streams.values()] == [3, 3, 3]
+    assert set(streams) == {"mainstream", "niche", "underground"}
+    # mainstream got the most-heard tracks
+    assert streams["mainstream"][0]["listeners"] == 9000
+    assert streams["underground"][-1]["listeners"] == 1000
+
+
+def test_split_streams_keeps_score_order_within_tiers():
+    ranked = _ranked(9)
+    ranked[8]["score"] = 0.99  # least-heard track, but best content fit
+    streams = engine.split_streams(ranked)
+    # underground tier re-sorted by score: the great fit leads its tier
+    assert streams["underground"][0]["title"] == "T8"
+    for songs in streams.values():
+        scores = [s["score"] for s in songs]
+        assert scores == sorted(scores, reverse=True)
+
+
+def test_split_streams_small_inputs_dont_crash():
+    assert engine.split_streams([]) == {"mainstream": [], "niche": [],
+                                        "underground": []}
+    s = engine.split_streams(_ranked(2))
+    assert len(s["mainstream"]) == 1 and len(s["underground"]) == 1

@@ -453,3 +453,18 @@ def test_import_route_stores_artwork(app_client, lastfm_env):
     assert r.status_code == 200
     assert r.get_json()["imported"] == 1
     assert db.top_songs()[0]["image_url"] == "http://img/xl.png"
+
+
+def test_mine_candidates_carries_listeners_and_via():
+    similar = _similar_payload(("Tame Impala", 0.9))
+    tracks = {"toptracks": {"track": [
+        {"name": "Borderline", "listeners": "900000", "playcount": "1",
+         "artist": {"name": "Tame Impala"}}]}}
+    with patch("lastfm.requests.get", _mock_get([similar, tracks])), \
+         patch("lastfm.time.sleep"):
+        mined = lastfm.mine_candidates("key123", ["Arctic Monkeys"],
+                                       max_artists=1, similar_per_artist=1,
+                                       tracks_per_artist=1)
+    cand = mined["candidates"][0]
+    assert cand["listeners"] == 900000
+    assert cand["via"] == "Arctic Monkeys"

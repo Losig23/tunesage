@@ -164,6 +164,29 @@ def hybrid_rank(candidates: list[dict], content_scores: list[float],
     return ranked
 
 
+def split_streams(ranked: list[dict]) -> dict:
+    """Split ranked candidates into popularity tiers.
+
+    Tertiles by Last.fm listener counts: the most-heard third is
+    "mainstream", the middle third "niche", the least-heard third
+    "underground". Each tier keeps hybrid-rank order (most *you*-shaped
+    first), so tiers are about crowd size, not quality — an underground
+    pick can still outscore a mainstream one on content fit.
+    """
+    ordered = sorted(ranked, key=lambda c: c.get("listeners", 0),
+                     reverse=True)
+    n = len(ordered)
+    third = max(1, n // 3)
+    streams = {
+        "mainstream": ordered[:third],
+        "niche": ordered[third:n - third] if n > 2 * third else [],
+        "underground": ordered[n - third:] if n > third else [],
+    }
+    for songs in streams.values():
+        songs.sort(key=lambda c: c["score"], reverse=True)
+    return streams
+
+
 def explain(candidate: dict, profile_terms: list[str]) -> str:
     """Human-readable 'why this recommendation'.
 

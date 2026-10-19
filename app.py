@@ -106,6 +106,9 @@ def create_app() -> Flask:
 
         payload = {"songs": ranked[:limit], "threads": mined["threads"][:10],
                    "source": mined["source"], "weights": weights,
+                   "streams": {k: v[:limit]
+                               for k, v in
+                               engine.split_streams(ranked).items()},
                    "cached": False}
         db.save_recommendations(payload)
         return jsonify(payload)
