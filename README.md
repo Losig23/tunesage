@@ -135,6 +135,29 @@ SQLite forever (BPM never changes), so each unique track costs exactly one
 API call. Tempo data by [GetSongBPM](https://getsongbpm.com), whose free
 tier requires this backlink — it's also in the dashboard footer.
 
+### Spotify playback
+
+Every recommendation gets a ▶ button that plays the track on your Spotify
+— phone included. Playback is a one-way street by design: recommendations
+come from Last.fm data, and nothing Spotify returns feeds the taste model
+(Spotify's Developer Policy bans training AI/ML on its content; playing
+tracks for your own listening is ordinary API use).
+
+Setup (one-time):
+
+1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+   (requires Spotify Premium, which playback control also needs).
+2. In the app settings, add redirect URI
+   `http://127.0.0.1:5001/api/spotify/callback` — `127.0.0.1`, not
+   `localhost`; Spotify rejects localhost.
+3. Put `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env` (see
+   `.env.example`) and restart the app.
+4. Click **Connect Spotify** in the dashboard header and approve access.
+5. Open Spotify on your phone, then hit ▶ on any recommendation.
+
+Tokens are stored in SQLite and refreshed silently. Device choice: the
+active device, else your phone, else the first available device.
+
 ## Deploy to Render (free)
 
 1. Push this repo to GitHub.

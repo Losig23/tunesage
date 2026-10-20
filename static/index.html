@@ -88,6 +88,7 @@
   <header>
     <h1>🎧 TuneSage</h1>
     <p>Turn your listening history into picks with a hybrid AI engine.</p>
+    <div id="spotifyBar"></div>
   </header>
 
   <section>
@@ -243,6 +244,7 @@ function recCard(s, i) {
         <div class="scores">${Math.round(s.score * 100)}/100${s.tempo ? ` · ${Math.round(s.tempo)} BPM` : ''}</div>
       </div>
       <div class="votes">
+        <button class="small" title="Play on Spotify" onclick="playOnSpotify('${jsq(s.title)}','${jsq(s.artist)}',this)">▶</button>
         <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',true,this)">👍</button>
         <button class="small" onclick="vote('${jsq(s.title)}','${jsq(s.artist)}',false,this)">👎</button>
       </div></div>`;
@@ -392,6 +394,63 @@ const jsq = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 loadTop();
 loadRecs();
 loadLastfm();
+loadSpotify();
+
+async function loadSpotify() {
+  let st;
+  try {
+    st = await api('/api/spotify/status');
+  } catch (e) {
+    $('spotifyBar').innerHTML = '';
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  let note = '';
+  if (params.get('spotify') === 'connected') note = ' <span class="threads">Spotify connected ✓</span>';
+  if (params.get('spotify') === 'error') note = ' <span class="threads">Spotify connection failed — try again.</span>';
+  if (!st.configured) {
+    $('spotifyBar').innerHTML =
+      '<p class="threads">Spotify playback: create an app at developer.spotify.com, ' +
+      'then set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET and restart.</p>' +
+      '<div class="threads" id="playStatus"></div>';
+  } else if (!st.connected) {
+    $('spotifyBar').innerHTML =
+      `<button class="small" onclick="location.href='/api/spotify/login'">Connect Spotify</button>${note}` +
+      '<div class="threads" id="playStatus"></div>';
+  } else {
+    $('spotifyBar').innerHTML =
+      `<span class="threads">Spotify connected</span> ` +
+      `<button class="ghost small" onclick="disconnectSpotify()">Disconnect</button>${note}` +
+      `<div class="threads" id="playStatus"></div>`;
+  }
+}
+
+async function disconnectSpotify() {
+  await api('/api/spotify/disconnect', { method: 'POST' });
+  loadSpotify();
+}
+
+async function playOnSpotify(title, artist, btn) {
+  const statusEl = $('playStatus');
+  const say = msg => { if (statusEl) statusEl.textContent = msg; };
+  btn.disabled = true;
+  say(`Starting "${title}"…`);
+  try {
+    const res = await api('/api/spotify/play', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, artist }) });
+    if (res.error) {
+      say(res.error);
+      if (res.error.includes("isn't connected")) loadSpotify();
+    } else {
+      say(`▶ Playing on ${res.device}`);
+    }
+  } catch (e) {
+    say('Could not reach Spotify — is the app running?');
+  } finally {
+    btn.disabled = false;
+  }
+}
 </script>
 </body>
 </html>

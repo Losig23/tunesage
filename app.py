@@ -12,7 +12,7 @@ import secrets
 import threading
 import time
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory
 from dotenv import load_dotenv
 
 load_dotenv()  # populate os.environ from .env (if present); real env vars win
@@ -22,6 +22,7 @@ import bpm as bpm_client
 import forum as forum_miner
 import lastfm as lastfm_client
 import recommender as engine
+import spotify as spotify_client
 
 log = logging.getLogger(__name__)
 
@@ -190,6 +191,65 @@ def create_app() -> Flask:
             return jsonify({"stage": "Starting…", "frac": 0.0})
         return jsonify({"stage": job["stage"], "frac": job["frac"]})
 
+    # ---- Spotify playback ------------------------------------------------
+    @app.get("/api/spotify/status")
+    def spotify_status():
+        client_id, _, _ = _spotify_config()
+        return jsonify({"configured": bool(client_id),
+                        "connected": db.get_spotify_tokens() is not None})
+
+    @app.get("/api/spotify/login")
+    def spotify_login():
+        client_id, _, redirect_uri = _spotify_config()
+        if not client_id:
+            return jsonify({"error": "SPOTIFY_CLIENT_ID is not set"}), 400
+        state = secrets.token_urlsafe(24)
+        db.save_spotify_state(state)
+        return redirect(spotify_client.authorize_url(
+            client_id, redirect_uri, state))
+
+    @app.get("/api/spotify/callback")
+    def spotify_callback():
+        client_id, client_secret, redirect_uri = _spotify_config()
+        code = request.args.get("code", "")
+        state = request.args.get("state", "")
+        expected = db.pop_spotify_state()
+        if not code or not expected or state != expected:
+            return redirect("/?spotify=error")
+        try:
+            tokens = spotify_client.exchange_code(
+                client_id, client_secret, code, redirect_uri)
+        except spotify_client.SpotifyError:
+            return redirect("/?spotify=error")
+        db.save_spotify_tokens(
+            tokens["access_token"], tokens.get("refresh_token"),
+            int(time.time()) + int(tokens.get("expires_in", 3600)))
+        return redirect("/?spotify=connected")
+
+    @app.post("/api/spotify/play")
+    def spotify_play():
+        data = request.get_json(force=True, silent=True) or {}
+        title = (data.get("title") or "").strip()
+        artist = (data.get("artist") or "").strip()
+        if not title or not artist:
+            return jsonify({"error": "title and artist required"}), 400
+        try:
+            access_token = _spotify_access_token()
+            device = spotify_client.play_recommendation(
+                access_token, title, artist)
+        except spotify_client.SpotifyError as e:
+            # Expected outcomes (not connected, no device, no match,
+            # Premium required) ride back as 200 + error, like mining_error:
+            # the frontend's api() helper throws on non-2xx.
+            return jsonify({"error": str(e)})
+        return jsonify({"ok": True, "device": device,
+                        "message": f"Playing on {device}"})
+
+    @app.post("/api/spotify/disconnect")
+    def spotify_disconnect():
+        db.clear_spotify_tokens()
+        return jsonify({"ok": True})
+
     # ---- feedback (online learning) ------------------------------------
     @app.post("/api/feedback")
     def feedback():
@@ -267,6 +327,39 @@ def _lastfm_config() -> tuple[str, str]:
     """(api_key, username) from the environment; empty strings when unset."""
     return (os.environ.get("LASTFM_API_KEY", "").strip(),
             os.environ.get("LASTFM_USERNAME", "").strip())
+
+
+def _spotify_config() -> tuple[str, str, str]:
+    """(client_id, client_secret, redirect_uri) from the environment."""
+    redirect_uri = os.environ.get(
+        "SPOTIFY_REDIRECT_URI", "").strip() \
+        or "http://127.0.0.1:5001/api/spotify/callback"
+    return (os.environ.get("SPOTIFY_CLIENT_ID", "").strip(),
+            os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip(),
+            redirect_uri)
+
+
+def _spotify_access_token() -> str:
+    """A valid Spotify access token, refreshing (and persisting) if needed.
+
+    Raises SpotifyError when Spotify isn't connected or refresh fails.
+    """
+    tokens = db.get_spotify_tokens()
+    if not tokens:
+        raise spotify_client.SpotifyError(
+            "Spotify isn't connected — use the Connect Spotify button.")
+    if tokens["expires_at"] and tokens["expires_at"] - 60 > time.time():
+        return tokens["access_token"]
+    client_id, client_secret, _ = _spotify_config()
+    if not tokens.get("refresh_token"):
+        raise spotify_client.SpotifyError(
+            "Spotify session expired — reconnect Spotify.")
+    fresh = spotify_client.refresh_access_token(
+        client_id, client_secret, tokens["refresh_token"])
+    db.save_spotify_tokens(
+        fresh["access_token"], fresh.get("refresh_token"),
+        int(time.time()) + int(fresh.get("expires_in", 3600)))
+    return fresh["access_token"]
 
 
 # Bump when the recommendations payload shape changes so stale cached

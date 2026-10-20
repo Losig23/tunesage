@@ -30,7 +30,10 @@ def tmpdb(tmp_path, monkeypatch):
                  "all_song_keys", "voted_keys", "record_feedback",
                  "get_tempo", "set_tempo",
                  "get_lastfm_cached", "set_lastfm_cached",
-                 "get_artwork", "set_artwork"):
+                 "get_artwork", "set_artwork",
+                 "save_spotify_tokens", "get_spotify_tokens",
+                 "clear_spotify_tokens", "save_spotify_state",
+                 "pop_spotify_state"):
         monkeypatch.setattr(db, name, _bind(getattr(db, name)))
     return p
 

@@ -88,6 +88,16 @@ CREATE TABLE IF NOT EXISTS art_cache (
     fetched_at INTEGER NOT NULL,
     PRIMARY KEY (title, artist)
 );
+-- Spotify playback tokens (single row, id=1): OAuth access/refresh tokens
+-- plus the pending OAuth state for the login round-trip. Playback only —
+-- no Spotify data is stored or fed to the recommender.
+CREATE TABLE IF NOT EXISTS spotify_tokens (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at INTEGER,
+    oauth_state TEXT
+);
 """
 
 
@@ -437,6 +447,85 @@ def set_artwork(title: str, artist: str, url: str,
             (title.strip(), artist.strip(), url, int(time.time())),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---- Spotify playback tokens (single row) ---------------------------------------
+
+def save_spotify_tokens(access_token: str, refresh_token: str | None,
+                        expires_at: int,
+                        path: Path | str = DB_PATH) -> None:
+    """Store OAuth tokens (keeps the old refresh token when not rotated)."""
+    conn = get_conn(path)
+    try:
+        conn.execute(
+            "INSERT INTO spotify_tokens (id, access_token, refresh_token,"
+            " expires_at) VALUES (1, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET access_token = excluded.access_token,"
+            " refresh_token = COALESCE(excluded.refresh_token,"
+            " spotify_tokens.refresh_token),"
+            " expires_at = excluded.expires_at",
+            (access_token, refresh_token, int(expires_at)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_spotify_tokens(path: Path | str = DB_PATH) -> dict | None:
+    """Stored OAuth tokens, or None when Spotify was never connected."""
+    conn = get_conn(path)
+    try:
+        row = conn.execute(
+            "SELECT access_token, refresh_token, expires_at"
+            " FROM spotify_tokens WHERE id = 1").fetchone()
+        if not row or not row["access_token"]:
+            return None
+        return {"access_token": row["access_token"],
+                "refresh_token": row["refresh_token"],
+                "expires_at": row["expires_at"]}
+    finally:
+        conn.close()
+
+
+def clear_spotify_tokens(path: Path | str = DB_PATH) -> None:
+    """Disconnect Spotify: drop the stored tokens."""
+    conn = get_conn(path)
+    try:
+        conn.execute("DELETE FROM spotify_tokens WHERE id = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_spotify_state(state: str, path: Path | str = DB_PATH) -> None:
+    """Remember the OAuth state for the login round-trip (host-independent,
+    unlike a session cookie: localhost vs 127.0.0.1 would lose it)."""
+    conn = get_conn(path)
+    try:
+        conn.execute(
+            "INSERT INTO spotify_tokens (id, oauth_state) VALUES (1, ?)"
+            " ON CONFLICT(id) DO UPDATE SET oauth_state = excluded.oauth_state",
+            (state,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def pop_spotify_state(path: Path | str = DB_PATH) -> str | None:
+    """Read + clear the pending OAuth state (one-shot)."""
+    conn = get_conn(path)
+    try:
+        row = conn.execute(
+            "SELECT oauth_state FROM spotify_tokens WHERE id = 1").fetchone()
+        state = row["oauth_state"] if row else None
+        if state:
+            conn.execute(
+                "UPDATE spotify_tokens SET oauth_state = NULL WHERE id = 1")
+            conn.commit()
+        return state
     finally:
         conn.close()
 
